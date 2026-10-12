@@ -61,7 +61,7 @@ struct AnswerNativeView: View {
                     Text(content.title)
                         .font(.title2.bold())
                         .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
+                        .qaTextSelection(title: content.title, blocks: content.blocks)
                 }
 
                 QAAuthorRow(author: content.author) {
@@ -102,6 +102,7 @@ struct AnswerNativeView: View {
                     segmentSubject: content.route.kind == .answer
                         ? .answer(content.route.contentID)
                         : .article(content.route.contentID),
+                    selectionTitle: content.title,
                     onNavigate: onNavigate
                 )
 

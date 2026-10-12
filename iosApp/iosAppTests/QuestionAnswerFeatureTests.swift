@@ -190,6 +190,51 @@ final class QuestionAnswerFeatureTests: XCTestCase {
         })
     }
 
+    func testSelectableTextBuilderSpansDocumentBlocks() {
+        let nestedItem = QAListItem(
+            runs: [QAInlineRun(text: "嵌套")],
+            ordinal: nil,
+            nestedLists: []
+        )
+        let item = QAListItem(
+            runs: [QAInlineRun(text: "列表")],
+            ordinal: 2,
+            nestedLists: [QAListGroup(kind: .ordered, items: [nestedItem])]
+        )
+        let blocks: [QABodyBlock] = [
+            .paragraph(UUID(), [QAInlineRun(text: "第一段")]),
+            .list(UUID(), .ordered, [item]),
+            .code(UUID(), "swift", "let value = 1"),
+            .formula(UUID(), latex: "x^2+y^2"),
+            .image(QAImageDTO(
+                url: URL(string: "https://pic.zhimg.com/example.jpg")!,
+                caption: "图注"
+            )),
+            .divider(UUID()),
+        ]
+
+        let text = QASelectableTextBuilder.text(title: "标题", blocks: blocks)
+
+        XCTAssertEqual(
+            text,
+            """
+            标题
+
+            第一段
+
+            2. 列表
+                1. 嵌套
+
+            swift
+            let value = 1
+
+            x^2+y^2
+
+            图注
+            """
+        )
+    }
+
     func testParserIgnoresNoscriptDuplicateAndRejectsDataImage() {
         let blocks = QARichContentParser.blocks(
             from: #"<figure><noscript><img src="https://pic.zhimg.com/duplicate.jpg"></noscript><img src="data:image/svg+xml,x" data-actualsrc="https://pic.zhimg.com/real.jpg"></figure>"#

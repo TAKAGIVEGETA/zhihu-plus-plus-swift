@@ -41,8 +41,8 @@ struct QuestionNativeView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Text(question.title)
                         .font(.title2.bold())
-                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                        .qaTextSelection(title: question.title, blocks: question.detailBlocks)
 
                     if !question.detailBlocks.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
@@ -67,6 +67,7 @@ struct QuestionNativeView: View {
                                 QABodyView(
                                     blocks: question.detailBlocks,
                                     segmentSubject: .question(question.id),
+                                    selectionTitle: question.title,
                                     onNavigate: onNavigate
                                 )
                             } else {
@@ -77,6 +78,7 @@ struct QuestionNativeView: View {
                                     ))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(3)
+                                    .qaTextSelection(title: question.title, blocks: question.detailBlocks)
                             }
                         }
                     }

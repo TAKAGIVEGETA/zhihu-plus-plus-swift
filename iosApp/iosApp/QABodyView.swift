@@ -1,9 +1,11 @@
 import AVKit
 import SwiftUI
+import UIKit
 
 struct QABodyView: View {
     let blocks: [QABodyBlock]
     let segmentSubject: CommentSubjectDTO?
+    let selectionTitle: String?
     let onNavigate: (QANavigationIntent) -> Void
     @Environment(\.nativeContentPresentation) private var presentation
     @ScaledMetric(relativeTo: .body) private var bodyPointSize: CGFloat = 17
@@ -12,10 +14,12 @@ struct QABodyView: View {
     init(
         blocks: [QABodyBlock],
         segmentSubject: CommentSubjectDTO? = nil,
+        selectionTitle: String? = nil,
         onNavigate: @escaping (QANavigationIntent) -> Void
     ) {
         self.blocks = blocks
         self.segmentSubject = segmentSubject
+        self.selectionTitle = selectionTitle
         self.onNavigate = onNavigate
     }
 
@@ -38,7 +42,7 @@ struct QABodyView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .textSelection(.enabled)
+        .qaTextSelection(title: selectionTitle, blocks: blocks)
         .environment(\.openURL, OpenURLAction { url in
             guard let destination = QABodyLinkResolver.resolve(url) else { return .discarded }
             onNavigate(.link(destination))
@@ -63,13 +67,11 @@ struct QABodyView: View {
                     .font(bodyFont)
                     .lineSpacing(bodyLineSpacing)
                     .tint(.accentColor)
-                    .textSelection(.enabled)
             }
         case let .heading(_, level, runs):
             QARichText(runs: runs, pointSize: headingPointSize(level))
                 .font(headingFont(level))
                 .fontWeight(.bold)
-                .textSelection(.enabled)
                 .padding(.top, level <= 2 ? 8 : 2)
         case let .quote(_, runs):
             HStack(alignment: .top, spacing: 12) {
@@ -79,7 +81,6 @@ struct QABodyView: View {
                     .foregroundStyle(.secondary)
                     .lineSpacing(bodyLineSpacing)
                     .tint(.accentColor)
-                    .textSelection(.enabled)
             }
         case let .list(_, kind, items):
             VStack(alignment: .leading, spacing: 9) {
@@ -93,7 +94,6 @@ struct QABodyView: View {
                             .font(bodyFont)
                             .lineSpacing(bodyLineSpacing)
                             .tint(.accentColor)
-                            .textSelection(.enabled)
                     }
                     .padding(.leading, CGFloat(row.depth) * 20)
                 }
@@ -108,7 +108,6 @@ struct QABodyView: View {
                     }
                     Text(text)
                         .font(.system(size: calloutPointSize * presentation.fontScale, design: .monospaced))
-                        .textSelection(.enabled)
                 }
                 .padding(14)
             }
@@ -142,7 +141,6 @@ struct QABodyView: View {
                         .tint(.accentColor)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                        .textSelection(.enabled)
                     Button {
                         onNavigate(.segmentComments(CommentThreadRouteDTO(subject: subject)))
                     } label: {
@@ -161,7 +159,6 @@ struct QABodyView: View {
                         .tint(.accentColor)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                        .textSelection(.enabled)
                 }
             }
         case let .video(_, video):
@@ -266,6 +263,156 @@ struct QABodyView: View {
             playbackURL: video.playbackURL,
             webURL: video.destinationURL
         )
+    }
+}
+
+struct QASelectableTextPresentation: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+enum QASelectableTextBuilder {
+    static func text(title: String?, blocks: [QABodyBlock]) -> String {
+        var sections = [title?.trimmingCharacters(in: .whitespacesAndNewlines)]
+        sections.append(contentsOf: blocks.compactMap(text(for:)))
+        return sections
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    private static func text(for block: QABodyBlock) -> String? {
+        switch block {
+        case let .paragraph(_, runs),
+             let .heading(_, _, runs),
+             let .quote(_, runs),
+             let .segment(_, _, runs):
+            return inlineText(runs)
+        case let .list(_, kind, items):
+            return listText(QAListGroup(kind: kind, items: items), depth: 0)
+        case let .code(_, language, source):
+            return [language, source]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+        case let .formula(_, latex):
+            return latex
+        case let .image(image):
+            return (image.caption ?? image.altText)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .video, .divider:
+            return nil
+        }
+    }
+
+    private static func listText(_ group: QAListGroup, depth: Int) -> String {
+        group.items.enumerated().flatMap { index, item -> [String] in
+            let ordinal = item.ordinal ?? group.startIndex + index
+            let marker = group.kind == .ordered ? "\(ordinal)." : "-"
+            let indentation = String(repeating: "    ", count: depth)
+            let contentLines = inlineText(item.runs)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+            var lines = ["\(indentation)\(marker) \(contentLines.first ?? "")"]
+            lines.append(contentsOf: contentLines.dropFirst().map { "\(indentation)    \($0)" })
+            for nestedList in item.nestedLists {
+                let nested = listText(nestedList, depth: depth + 1)
+                if !nested.isEmpty { lines.append(nested) }
+            }
+            return lines
+        }.joined(separator: "\n")
+    }
+
+    private static func inlineText(_ runs: [QAInlineRun]) -> String {
+        runs.map { run in
+            if let formula = run.formula { return formula.latex }
+            return run.text
+        }.joined()
+    }
+}
+
+private struct QATextSelectionModifier: ViewModifier {
+    let title: String?
+    let blocks: [QABodyBlock]
+    @State private var presentation: QASelectableTextPresentation?
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                    presentSelection()
+                }
+            )
+            .simultaneousGesture(
+                TapGesture(count: 2).onEnded { presentSelection() }
+            )
+            .sheet(item: $presentation) { presentation in
+                QASelectableTextSheet(presentation: presentation)
+            }
+    }
+
+    private func presentSelection() {
+        let text = QASelectableTextBuilder.text(title: title, blocks: blocks)
+        guard !text.isEmpty else { return }
+        presentation = QASelectableTextPresentation(text: text)
+    }
+}
+
+private struct QASelectableTextSheet: View {
+    let presentation: QASelectableTextPresentation
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            QASelectableTextTextView(text: presentation.text)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .navigationTitle("选择文字")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("完成") { dismiss() }
+                    }
+                }
+        }
+        .presentationDetents([.large])
+    }
+}
+
+private struct QASelectableTextTextView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = true
+        textView.alwaysBounceVertical = true
+        textView.adjustsFontForContentSizeCategory = true
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.textColor = .label
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != text {
+            uiView.text = text
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func qaTextSelection(title: String?, blocks: [QABodyBlock]) -> some View {
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            modifier(QATextSelectionModifier(title: title, blocks: blocks))
+        } else {
+            self
+        }
     }
 }
 
