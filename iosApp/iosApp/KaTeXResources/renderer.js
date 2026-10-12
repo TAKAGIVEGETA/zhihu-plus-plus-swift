@@ -22,7 +22,7 @@ window.renderFormula = async function(request) {
     const measuredWidth = Math.max(rect.width, output.scrollWidth);
     return {
       ok: true,
-      width: Math.ceil(measuredWidth) + 1,
+      width: Math.ceil(measuredWidth) + 4,
       height: Math.ceil(rect.height)
     };
   } catch (error) {
