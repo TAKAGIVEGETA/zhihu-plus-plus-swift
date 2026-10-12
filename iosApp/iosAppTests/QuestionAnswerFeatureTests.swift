@@ -215,6 +215,29 @@ final class QuestionAnswerFeatureTests: XCTestCase {
         XCTAssertFalse(blocks.contains { if case .formula = $0 { return true }; return false })
     }
 
+    func testParserUsesAltTeXForStandaloneEquationImage() throws {
+        let blocks = QARichContentParser.blocks(
+            from: #"<p> <img src="https://www.zhihu.com/equation?tex=%5Cfrac%7B%5Cpi%7D%7B4%7D+%3D+%5Carctan%281%29" alt="\frac{\pi}{4} = \arctan(1)" eeimg="1"/> </p>"#
+        )
+
+        XCTAssertEqual(blocks.count, 1)
+        guard case let .formula(_, latex) = try XCTUnwrap(blocks.first) else {
+            return XCTFail("expected a standalone equation image to become a formula block")
+        }
+        XCTAssertEqual(latex, "\\frac{\\pi}{4} = \\arctan(1)")
+    }
+
+    func testParserDecodesEquationQuerySpacesWhenAltIsMissing() throws {
+        let blocks = QARichContentParser.blocks(
+            from: #"<p><img src="https://www.zhihu.com/equation?tex=a+%2B+b"></p>"#
+        )
+
+        guard case let .formula(_, latex) = try XCTUnwrap(blocks.first) else {
+            return XCTFail("expected the equation query to become a formula block")
+        }
+        XCTAssertEqual(latex, "a + b")
+    }
+
     func testParserPreservesTrustedZhihuImageDimensionsBeforeLoading() throws {
         let blocks = QARichContentParser.blocks(from: """
         <figure>

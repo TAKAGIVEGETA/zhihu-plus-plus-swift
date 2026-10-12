@@ -43,6 +43,7 @@ enum QARichContentParser {
         var caption = ""
         var capturingCaption = false
         var videoBox: VideoBoxContext?
+        var pendingEquations: [UUID: String] = [:]
 
         mutating func parse() -> [QABodyBlock] {
             let expression = try? NSRegularExpression(pattern: "(?s)<[^>]*>|[^<]+")
@@ -285,12 +286,23 @@ enum QARichContentParser {
         mutating func appendText(_ value: String) {
             guard !value.isEmpty else { return }
             let run = QAInlineRun(text: value, style: style, link: links.last)
+            appendInlineRun(run)
+        }
+
+        mutating func appendEquationText(_ value: String, latex: String) {
+            guard !value.isEmpty else { return }
+            let run = QAInlineRun(text: value, style: style, link: links.last)
+            appendInlineRun(run)
+            pendingEquations[run.id] = latex
+        }
+
+        mutating func appendInlineRun(_ run: QAInlineRun) {
             if listStack.isEmpty {
                 runs.append(run)
             } else {
                 let index = listStack.count - 1
                 if !listStack[index].hasOpenItem,
-                   value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                   run.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return
                 }
                 if !listStack[index].hasOpenItem {
@@ -301,6 +313,12 @@ enum QARichContentParser {
         }
 
         mutating func flushBlock() {
+            if promotePendingEquationsToBlocksIfNeeded() {
+                runs = []
+                currentBlock = .paragraph
+                return
+            }
+            pendingEquations = [:]
             guard let normalized = normalizedRuns(), !normalized.isEmpty else {
                 runs = []
                 return
@@ -319,6 +337,20 @@ enum QARichContentParser {
             }
             runs = []
             currentBlock = .paragraph
+        }
+
+        mutating func promotePendingEquationsToBlocksIfNeeded() -> Bool {
+            guard listStack.isEmpty, !pendingEquations.isEmpty else { return false }
+            let visibleRuns = runs.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            guard !visibleRuns.isEmpty, visibleRuns.allSatisfy({ pendingEquations[$0.id] != nil }) else {
+                return false
+            }
+            for run in visibleRuns {
+                guard let latex = pendingEquations[run.id] else { continue }
+                blocks.append(.formula(UUID(), latex: latex))
+            }
+            pendingEquations = [:]
+            return true
         }
 
         func normalizedRuns() -> [QAInlineRun]? {
@@ -355,8 +387,14 @@ enum QARichContentParser {
                 return
             }
             let rawURL = tag.attributes["data-original"] ?? tag.attributes["data-actualsrc"] ?? tag.attributes["src"]
-            if let latex = rawURL.flatMap(equationLatex) {
-                appendText(QALatexReadableText.render(decodeText(latex, preserveWhitespace: true)))
+            if let queryLatex = rawURL.flatMap(equationLatex) {
+                let latex = tag.attributes["alt"]?.nilIfBlank
+                    ?? queryLatex.replacingOccurrences(of: "+", with: " ")
+                let decodedLatex = decodeText(latex, preserveWhitespace: true)
+                appendEquationText(
+                    QALatexReadableText.render(decodedLatex),
+                    latex: decodedLatex
+                )
                 return
             }
             guard let url = rawURL.flatMap(trustedRemoteURL) else { return }
