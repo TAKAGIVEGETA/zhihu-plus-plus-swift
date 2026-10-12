@@ -271,7 +271,7 @@ final class FeedInfrastructureTests: XCTestCase {
         )
     }
 
-    func testSearchProjectionSkipsPromotionalCardWithStructuredDescription() throws {
+    func testSearchProjectionSkipsNonContentSearchCards() throws {
         let page = try FeedResponseMapper.page(
             from: FeedFixtures.searchPageWithStructuredDescription,
             policy: .search
@@ -746,7 +746,7 @@ private enum FeedFixtures {
     )
 
     static let searchPageWithStructuredDescription = Data(
-        #"{"data":[{"type":"hot_timing","object":{"type":"hot_timing","title":"热点聚合","description":{"type":"question","object":{"id":"9","type":"question","title":"聚合问题"}}}},{"type":"search_result","id":"result-1","object":{"id":"81","type":"article","title":"原生搜索文章","excerpt":"文章摘要","voteup_count":12,"comment_count":3,"thumbnail_info":{"thumbnails":[{"url":"https://pic.zhimg.com/article.jpg"}]},"author":{"id":"member","url_token":"author","name":"作者","headline":"简介","avatar_url":"https://pic.zhimg.com/avatar.jpg"}}}],"paging":{"is_end":true,"next":null}}"#.utf8
+        #"{"data":[{"type":"hot_timing","object":{"type":"hot_timing","title":"热点聚合","description":{"type":"question","object":{"id":"9","type":"question","title":"聚合问题"}}}},{"type":"knowledge_ad","object":{"header":{"card_title":"电子书"},"body":{"title":"商品卡片"},"footer":""}},{"type":"relevant_query","object":null},{"type":"search_result","id":"result-1","object":{"id":"81","type":"article","title":"原生搜索文章","excerpt":"文章摘要","voteup_count":12,"comment_count":3,"thumbnail_info":{"thumbnails":[{"url":"https://pic.zhimg.com/article.jpg"}]},"author":{"id":"member","url_token":"author","name":"作者","headline":"简介","avatar_url":"https://pic.zhimg.com/avatar.jpg"}}}],"paging":{"is_end":true,"next":null}}"#.utf8
     )
 
     static let nonContentSearchPage = Data(

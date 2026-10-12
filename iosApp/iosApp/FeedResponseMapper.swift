@@ -166,7 +166,8 @@ enum FeedResponseMapper {
 
     private static func item(from entry: FeedAPIEntry, policy: FeedProjectionPolicy) -> FeedItemDTO? {
         guard let target = entry.displayTarget,
-              let kind = FeedItemKind(rawValue: target.type)
+              let rawType = target.type,
+              let kind = FeedItemKind(rawValue: rawType)
         else { return nil }
 
         let title: String
@@ -388,7 +389,8 @@ private struct FeedPromotionMarker: Decodable {
 
 private struct FeedTargetPayload: Decodable {
     let id: JSONIdentifier?
-    let type: String
+    // Search responses also include non-content cards whose objects have no type.
+    let type: String?
     let url: String?
     let title: String?
     let name: String?
