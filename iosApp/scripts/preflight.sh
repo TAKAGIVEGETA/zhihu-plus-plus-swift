@@ -106,14 +106,14 @@ $DESTINATIONS_OUTPUT"
 }
 
 if ! printf '%s\n' "$DESTINATIONS_OUTPUT" | awk -v needle="$DESTINATION_MATCH" '
-  /Available destinations for/ { section = "available"; next }
-  /Ineligible destinations for/ { section = "ineligible"; next }
+  /Available destinations for|Destinations compatible with/ { section = "available"; next }
+  /Ineligible destinations for|Destinations incompatible with/ { section = "ineligible"; next }
   section == "available" && index($0, needle) && $0 !~ /error:/ { found = 1 }
   END { exit found ? 0 : 1 }
 '; then
   DESTINATION_ERROR="$(printf '%s\n' "$DESTINATIONS_OUTPUT" | awk -v needle="$DESTINATION_MATCH" '
-    /Available destinations for/ { section = "available"; next }
-    /Ineligible destinations for/ { section = "ineligible"; next }
+    /Available destinations for|Destinations compatible with/ { section = "available"; next }
+    /Ineligible destinations for|Destinations incompatible with/ { section = "ineligible"; next }
     section == "ineligible" && index($0, needle) { print; exit }
   ')"
 

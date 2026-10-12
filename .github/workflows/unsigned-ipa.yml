@@ -1,0 +1,37 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
+jobs:
+  build-unsigned-ipa:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Verify Xcode
+        run: xcodebuild -version
+
+      - name: Package unsigned IPA
+        run: |
+          BUNDLE_ID=com.github.zly2006.zhplus.ios \
+            ./iosApp/scripts/build-sidestore-ipa.sh
+          test -f build/iosApp/sidestore/ZhihuPlusPlus-SideStore.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ZhihuPlusPlus-unsigned-ipa
+          path: build/iosApp/sidestore/ZhihuPlusPlus-SideStore.ipa
+          if-no-files-found: error

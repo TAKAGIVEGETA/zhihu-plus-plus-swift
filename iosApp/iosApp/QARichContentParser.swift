@@ -355,6 +355,11 @@ enum QARichContentParser {
                 return
             }
             let rawURL = tag.attributes["data-original"] ?? tag.attributes["data-actualsrc"] ?? tag.attributes["src"]
+            if let latex = rawURL.flatMap(equationLatex) {
+                flushBlock()
+                blocks.append(.formula(UUID(), latex: decodeText(latex, preserveWhitespace: true)))
+                return
+            }
             guard let url = rawURL.flatMap(trustedRemoteURL) else { return }
             if videoBox != nil {
                 videoBox?.thumbnailURL = url
@@ -414,6 +419,17 @@ enum QARichContentParser {
             }
             guard let fallbackWidth, let fallbackHeight else { return nil }
             return QAImageDimensions(width: fallbackWidth, height: fallbackHeight)
+        }
+
+        private func equationLatex(_ raw: String) -> String? {
+            guard let url = normalizedRemoteURL(raw),
+                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  components.path == "/equation",
+                  let host = components.host?.lowercased(),
+                  host == "zhihu.com" || host == "www.zhihu.com",
+                  let latex = components.queryItems?.first(where: { $0.name == "tex" })?.value?.nilIfBlank
+            else { return nil }
+            return latex
         }
     }
 

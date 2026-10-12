@@ -201,6 +201,21 @@ final class QuestionAnswerFeatureTests: XCTestCase {
         XCTAssertEqual(images.map(\.url.absoluteString), ["https://pic.zhimg.com/real.jpg"])
     }
 
+    func testParserProjectsEquationImageFallbackToFormula() throws {
+        let blocks = QARichContentParser.blocks(
+            from: #"<img src="https://www.zhihu.com/equation?tex=%5CLaTeX">"#
+        )
+
+        let formula = try XCTUnwrap(
+            blocks.first { if case .formula = $0 { return true }; return false }
+        )
+        guard case let .formula(_, latex) = formula else {
+            return XCTFail("Expected an equation image to be projected as a formula")
+        }
+        XCTAssertEqual(latex, "\\LaTeX")
+        XCTAssertFalse(blocks.contains { if case .image = $0 { return true }; return false })
+    }
+
     func testParserPreservesTrustedZhihuImageDimensionsBeforeLoading() throws {
         let blocks = QARichContentParser.blocks(from: """
         <figure>
