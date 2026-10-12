@@ -127,6 +127,8 @@ final class KaTeXResourceTests: XCTestCase {
         XCTAssertFalse(script.contains("XMLHttpRequest"))
         XCTAssertTrue(styleSheet.contains(".katex-display"))
         XCTAssertTrue(styleSheet.contains("margin: 0"))
+        XCTAssertTrue(styleSheet.contains("padding: 2px 0.15em 2px 2px"))
+        XCTAssertTrue(script.contains("Math.ceil(measuredWidth) + 1"))
     }
 
     func testUntrustedKaTeXCommandsCannotCreateLinksImagesOrCustomHTML() throws {

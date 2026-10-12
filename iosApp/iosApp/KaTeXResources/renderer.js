@@ -19,9 +19,10 @@ window.renderFormula = async function(request) {
     });
     await document.fonts.ready;
     const rect = output.getBoundingClientRect();
+    const measuredWidth = Math.max(rect.width, output.scrollWidth);
     return {
       ok: true,
-      width: Math.ceil(rect.width),
+      width: Math.ceil(measuredWidth) + 1,
       height: Math.ceil(rect.height)
     };
   } catch (error) {

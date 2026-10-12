@@ -8,7 +8,8 @@ html, body {
 #formula {
   box-sizing: border-box;
   display: inline-block;
-  padding: 2px;
+  /* KaTeX delimiter glyphs can extend slightly beyond their layout box. */
+  padding: 2px 0.15em 2px 2px;
   white-space: nowrap;
 }
 
