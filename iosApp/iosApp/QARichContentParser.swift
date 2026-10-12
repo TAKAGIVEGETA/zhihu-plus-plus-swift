@@ -356,8 +356,7 @@ enum QARichContentParser {
             }
             let rawURL = tag.attributes["data-original"] ?? tag.attributes["data-actualsrc"] ?? tag.attributes["src"]
             if let latex = rawURL.flatMap(equationLatex) {
-                flushBlock()
-                blocks.append(.formula(UUID(), latex: decodeText(latex, preserveWhitespace: true)))
+                appendText(QALatexReadableText.render(decodeText(latex, preserveWhitespace: true)))
                 return
             }
             guard let url = rawURL.flatMap(trustedRemoteURL) else { return }
@@ -602,6 +601,9 @@ enum QALatexReadableText {
                 while index < characters.count, characters[index].isWhitespace {
                     index += 1
                 }
+                if let symbol = Self.commandSymbols[command] {
+                    return symbol
+                }
                 switch command {
                 case "backslash": return "\\"
                 case "quad": return "\u{2003}"
@@ -638,6 +640,28 @@ enum QALatexReadableText {
             return scriptCharacters(atom, isSuperscript: isSuperscript)
                 ?? "\(isSuperscript ? "^" : "_")(\(atom))"
         }
+
+        private static let commandSymbols: [String: String] = [
+            "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+            "epsilon": "ε", "zeta": "ζ", "eta": "η", "theta": "θ",
+            "iota": "ι", "kappa": "κ", "lambda": "λ", "mu": "μ",
+            "nu": "ν", "xi": "ξ", "rho": "ρ", "sigma": "σ",
+            "tau": "τ", "upsilon": "υ", "phi": "φ", "chi": "χ",
+            "psi": "ψ", "omega": "ω", "Gamma": "Γ", "Delta": "Δ",
+            "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ", "Pi": "Π",
+            "Sigma": "Σ", "Upsilon": "Υ", "Phi": "Φ", "Psi": "Ψ",
+            "Omega": "Ω", "LaTeX": "LaTeX",
+            "infty": "∞", "partial": "∂", "nabla": "∇",
+            "pm": "±", "times": "×", "div": "÷", "cdot": "·",
+            "leq": "≤", "geq": "≥", "neq": "≠", "approx": "≈",
+            "equiv": "≡", "propto": "∝", "in": "∈", "notin": "∉",
+            "subset": "⊂", "subseteq": "⊆", "supset": "⊃",
+            "cup": "∪", "cap": "∩", "emptyset": "∅",
+            "sum": "∑", "prod": "∏", "int": "∫",
+            "rightarrow": "→", "leftarrow": "←",
+            "Rightarrow": "⇒", "Leftarrow": "⇐",
+            "ldots": "…", "dots": "…", "cdots": "⋯",
+        ]
 
         private func scriptCharacters(_ value: String, isSuperscript: Bool) -> String? {
             let table = isSuperscript ? Self.superscriptCharacters : Self.subscriptCharacters
