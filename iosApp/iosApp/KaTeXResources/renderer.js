@@ -9,7 +9,7 @@ window.renderFormula = async function(request) {
 
   try {
     katex.render(request.latex, output, {
-      displayMode: true,
+      displayMode: request.displayMode,
       throwOnError: true,
       strict: "ignore",
       trust: false,

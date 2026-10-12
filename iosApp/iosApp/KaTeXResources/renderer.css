@@ -8,6 +8,10 @@ html, body {
 #formula {
   box-sizing: border-box;
   display: inline-block;
-  padding: 4px;
+  padding: 2px;
   white-space: nowrap;
+}
+
+.katex-display {
+  margin: 0;
 }

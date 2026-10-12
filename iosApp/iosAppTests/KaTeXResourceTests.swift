@@ -100,6 +100,10 @@ final class KaTeXResourceTests: XCTestCase {
             contentsOf: resources.appendingPathComponent("renderer.js"),
             encoding: .utf8
         )
+        let styleSheet = try String(
+            contentsOf: resources.appendingPathComponent("renderer.css"),
+            encoding: .utf8
+        )
 
         XCTAssertTrue(page.contains("default-src 'none'"))
         XCTAssertTrue(page.contains("script-src 'self'"))
@@ -117,9 +121,12 @@ final class KaTeXResourceTests: XCTestCase {
         XCTAssertTrue(script.contains("trust: false"))
         XCTAssertTrue(script.contains("maxExpand: 1000"))
         XCTAssertTrue(script.contains("maxSize: 100"))
+        XCTAssertTrue(script.contains("displayMode: request.displayMode"))
         XCTAssertTrue(script.contains("throwOnError: true"))
         XCTAssertFalse(script.contains("fetch("))
         XCTAssertFalse(script.contains("XMLHttpRequest"))
+        XCTAssertTrue(styleSheet.contains(".katex-display"))
+        XCTAssertTrue(styleSheet.contains("margin: 0"))
     }
 
     func testUntrustedKaTeXCommandsCannotCreateLinksImagesOrCustomHTML() throws {
@@ -188,6 +195,7 @@ final class KaTeXResourceTests: XCTestCase {
             baseline.cacheKey,
             renderRequest(color: .darkForeground, isDarkMode: true).cacheKey
         )
+        XCTAssertNotEqual(baseline.cacheKey, renderRequest(displayMode: false).cacheKey)
     }
 
     func testMissingResourceIsReportedBeforeRendering() throws {
@@ -270,14 +278,16 @@ final class KaTeXResourceTests: XCTestCase {
         pointSize: CGFloat = 17,
         color: QAKaTeXRenderColor = .lightForeground,
         scale: CGFloat = 2,
-        isDarkMode: Bool = false
+        isDarkMode: Bool = false,
+        displayMode: Bool = true
     ) -> QAKaTeXRenderRequest {
         QAKaTeXRenderRequest(
             latex: #"x^2+\frac{1}{2}"#,
             pointSize: pointSize,
             color: color,
             scale: scale,
-            isDarkMode: isDarkMode
+            isDarkMode: isDarkMode,
+            displayMode: displayMode
         )
     }
 

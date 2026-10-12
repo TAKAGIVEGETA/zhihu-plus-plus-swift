@@ -97,19 +97,22 @@ struct QAKaTeXRenderRequest: Hashable, Sendable {
     let color: QAKaTeXRenderColor
     let scale: CGFloat
     let isDarkMode: Bool
+    let displayMode: Bool
 
     init(
         latex: String,
         pointSize: CGFloat,
         color: QAKaTeXRenderColor,
         scale: CGFloat,
-        isDarkMode: Bool
+        isDarkMode: Bool,
+        displayMode: Bool = true
     ) {
         self.latex = latex
         self.pointSize = pointSize
         self.color = color
         self.scale = scale
         self.isDarkMode = isDarkMode
+        self.displayMode = displayMode
     }
 
     var cacheKey: String {
@@ -125,6 +128,7 @@ struct QAKaTeXRenderRequest: Hashable, Sendable {
             "\(color.red)-\(color.green)-\(color.blue)-\(color.alpha)",
             String(scaleKey),
             isDarkMode ? "dark" : "light",
+            displayMode ? "display" : "inline",
         ].joined(separator: "|")
     }
 }
@@ -358,6 +362,7 @@ private final class QAKaTeXWebEngine: NSObject, WKNavigationDelegate, WKUIDelega
                 "latex": request.latex,
                 "pointSize": request.pointSize,
                 "color": request.color.cssValue,
+                "displayMode": request.displayMode,
                 "accessibilityLabel": QALatexReadableText.render(request.latex),
             ],
         ]
@@ -492,8 +497,9 @@ struct QAKaTeXFormulaView: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal, showsIndicators: true) {
             content
+                .fixedSize(horizontal: true, vertical: true)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
         }
@@ -537,6 +543,7 @@ struct QAKaTeXFormulaView: View {
         case .fallback:
             Text(QALatexReadableText.render(latex))
                 .font(.system(size: pointSize, design: .monospaced))
+                .fixedSize(horizontal: true, vertical: false)
                 .textSelection(.enabled)
         }
     }
