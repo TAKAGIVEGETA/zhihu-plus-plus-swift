@@ -43,7 +43,6 @@ enum QARichContentParser {
         var caption = ""
         var capturingCaption = false
         var videoBox: VideoBoxContext?
-        var pendingEquations: [UUID: String] = [:]
 
         mutating func parse() -> [QABodyBlock] {
             let expression = try? NSRegularExpression(pattern: "(?s)<[^>]*>|[^<]+")
@@ -289,11 +288,14 @@ enum QARichContentParser {
             appendInlineRun(run)
         }
 
-        mutating func appendEquationText(_ value: String, latex: String) {
-            guard !value.isEmpty else { return }
-            let run = QAInlineRun(text: value, style: style, link: links.last)
+        mutating func appendEquationRun(_ latex: String, isDisplay: Bool) {
+            let run = QAInlineRun(
+                text: QALatexReadableText.render(latex),
+                style: style,
+                link: links.last,
+                formula: QAInlineFormula(latex: latex, isDisplay: isDisplay)
+            )
             appendInlineRun(run)
-            pendingEquations[run.id] = latex
         }
 
         mutating func appendInlineRun(_ run: QAInlineRun) {
@@ -313,12 +315,10 @@ enum QARichContentParser {
         }
 
         mutating func flushBlock() {
-            if promotePendingEquationsToBlocksIfNeeded() {
-                runs = []
-                currentBlock = .paragraph
+            if listStack.isEmpty {
+                flushTopLevelRunsContainingDisplayEquations()
                 return
             }
-            pendingEquations = [:]
             guard let normalized = normalizedRuns(), !normalized.isEmpty else {
                 runs = []
                 return
@@ -339,18 +339,49 @@ enum QARichContentParser {
             currentBlock = .paragraph
         }
 
-        mutating func promotePendingEquationsToBlocksIfNeeded() -> Bool {
-            guard listStack.isEmpty, !pendingEquations.isEmpty else { return false }
-            let visibleRuns = runs.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            guard !visibleRuns.isEmpty, visibleRuns.allSatisfy({ pendingEquations[$0.id] != nil }) else {
-                return false
+        mutating func flushTopLevelRunsContainingDisplayEquations() {
+            var inlineRuns: [QAInlineRun] = []
+
+            func appendInlineRuns() {
+                guard let normalized = normalizedRuns(inlineRuns) else {
+                    inlineRuns = []
+                    return
+                }
+                appendRunsBlock(normalized)
+                inlineRuns = []
             }
-            for run in visibleRuns {
-                guard let latex = pendingEquations[run.id] else { continue }
-                blocks.append(.formula(UUID(), latex: latex))
+
+            for run in runs {
+                guard let formula = run.formula, formula.isDisplay else {
+                    inlineRuns.append(run)
+                    continue
+                }
+                appendInlineRuns()
+                blocks.append(.formula(UUID(), latex: formula.latex))
             }
-            pendingEquations = [:]
-            return true
+            appendInlineRuns()
+
+            runs = []
+            currentBlock = .paragraph
+        }
+
+        mutating func appendRunsBlock(_ normalized: [QAInlineRun]) {
+            let id = UUID()
+            if let segmentID {
+                blocks.append(.segment(id, segmentID: segmentID, runs: normalized))
+            } else {
+                switch currentBlock {
+                case .paragraph: blocks.append(.paragraph(id, normalized))
+                case let .heading(level): blocks.append(.heading(id, level: level, runs: normalized))
+                case .quote: blocks.append(.quote(id, normalized))
+                case .code:
+                    blocks.append(.code(
+                        id,
+                        language: preLanguage?.nilIfBlank,
+                        text: normalized.map(\.text).joined()
+                    ))
+                }
+            }
         }
 
         func normalizedRuns() -> [QAInlineRun]? {
@@ -372,7 +403,13 @@ enum QARichContentParser {
                 var text = run.text.replacingOccurrences(of: "[\\t ]+", with: " ", options: .regularExpression)
                 if index == 0 { text = text.trimmingCharacters(in: .whitespaces) }
                 if index == result.count - 1 { text = text.trimmingCharacters(in: .whitespaces) }
-                return QAInlineRun(id: run.id, text: text, style: run.style, link: run.link)
+                return QAInlineRun(
+                    id: run.id,
+                    text: text,
+                    style: run.style,
+                    link: run.link,
+                    formula: run.formula
+                )
             }.filter { !$0.text.isEmpty }
         }
 
@@ -391,10 +428,10 @@ enum QARichContentParser {
                 let latex = tag.attributes["alt"]?.nilIfBlank
                     ?? queryLatex.replacingOccurrences(of: "+", with: " ")
                 let decodedLatex = decodeText(latex, preserveWhitespace: true)
-                appendEquationText(
-                    QALatexReadableText.render(decodedLatex),
-                    latex: decodedLatex
-                )
+                let isDisplay = tag.attributes["eeimg"] == "2" ||
+                    decodedLatex.count > 4096 ||
+                    isDisplayEquation(decodedLatex)
+                appendEquationRun(decodedLatex, isDisplay: isDisplay)
                 return
             }
             guard let url = rawURL.flatMap(trustedRemoteURL) else { return }
@@ -579,6 +616,97 @@ enum QARichContentParser {
               segments.indices.contains(marker + 1)
         else { return nil }
         return Int64(segments[marker + 1])
+    }
+
+    static func isDisplayEquation(_ latex: String) -> Bool {
+        let characters = Array(latex)
+        var index = 0
+        var groupDepth = 0
+        var environments: [String] = []
+
+        func skipIgnorable(from start: Int) -> Int {
+            var cursor = start
+            while cursor < characters.count {
+                let character = characters[cursor]
+                if character.isWhitespace {
+                    cursor += 1
+                } else if character == "%" {
+                    cursor += 1
+                    while cursor < characters.count,
+                          characters[cursor] != "\n",
+                          characters[cursor] != "\r" {
+                        cursor += 1
+                    }
+                } else {
+                    break
+                }
+            }
+            return cursor
+        }
+
+        func environmentName(from start: Int) -> (name: String, nextIndex: Int)? {
+            let cursor = skipIgnorable(from: start)
+            guard cursor < characters.count, characters[cursor] == "{" else { return nil }
+            let nameStart = cursor + 1
+            var nameEnd = nameStart
+            while nameEnd < characters.count, characters[nameEnd] != "}" {
+                if characters[nameEnd] == "{" { return nil }
+                nameEnd += 1
+            }
+            guard nameEnd < characters.count, nameEnd != nameStart else { return nil }
+            return (String(characters[nameStart..<nameEnd]), nameEnd + 1)
+        }
+
+        while index < characters.count {
+            let character = characters[index]
+            switch character {
+            case "%":
+                index = skipIgnorable(from: index)
+            case "{":
+                groupDepth += 1
+                index += 1
+            case "}":
+                if groupDepth > 0 { groupDepth -= 1 }
+                index += 1
+            case "\\":
+                if index + 1 < characters.count, characters[index + 1] == "\\" {
+                    if groupDepth == 0, environments.isEmpty { return true }
+                    index += 2
+                    continue
+                }
+
+                var commandEnd = index + 1
+                if commandEnd < characters.count, characters[commandEnd].isLetter {
+                    while commandEnd < characters.count, characters[commandEnd].isLetter {
+                        commandEnd += 1
+                    }
+                } else if commandEnd < characters.count {
+                    commandEnd += 1
+                }
+                let command = String(characters[(index + 1)..<commandEnd])
+                if command == "tag" { return true }
+                if command == "begin" || command == "end",
+                   let environment = environmentName(from: commandEnd) {
+                    if command == "begin",
+                       groupDepth == 0,
+                       environments.isEmpty,
+                       environment.name == "align" || environment.name == "align*" {
+                        return true
+                    }
+                    if command == "begin" {
+                        environments.append(environment.name)
+                    } else if environments.last == environment.name {
+                        environments.removeLast()
+                    }
+                    index = environment.nextIndex
+                    continue
+                }
+                index = commandEnd
+            default:
+                index += 1
+            }
+        }
+        return false
     }
 
     private static func decodeText(_ value: String, preserveWhitespace: Bool) -> String {

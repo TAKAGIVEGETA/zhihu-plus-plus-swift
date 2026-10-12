@@ -211,20 +211,25 @@ final class QuestionAnswerFeatureTests: XCTestCase {
             return XCTFail("expected the equation image to stay in the paragraph")
         }
         XCTAssertEqual(runs.map(\.text).joined(), "半径为π时")
+        XCTAssertEqual(try XCTUnwrap(runs.first { $0.formula != nil }).formula?.latex, "\\pi")
+        XCTAssertEqual(try XCTUnwrap(runs.first { $0.formula != nil }).formula?.isDisplay, false)
         XCTAssertFalse(blocks.contains { if case .image = $0 { return true }; return false })
         XCTAssertFalse(blocks.contains { if case .formula = $0 { return true }; return false })
     }
 
-    func testParserUsesAltTeXForStandaloneEquationImage() throws {
+    func testParserKeepsStandaloneInlineEquationInline() throws {
         let blocks = QARichContentParser.blocks(
             from: #"<p> <img src="https://www.zhihu.com/equation?tex=%5Cfrac%7B%5Cpi%7D%7B4%7D+%3D+%5Carctan%281%29" alt="\frac{\pi}{4} = \arctan(1)" eeimg="1"/> </p>"#
         )
 
         XCTAssertEqual(blocks.count, 1)
-        guard case let .formula(_, latex) = try XCTUnwrap(blocks.first) else {
-            return XCTFail("expected a standalone equation image to become a formula block")
+        guard case let .paragraph(_, runs) = try XCTUnwrap(blocks.first) else {
+            return XCTFail("expected a standalone equation image to stay inline")
         }
-        XCTAssertEqual(latex, "\\frac{\\pi}{4} = \\arctan(1)")
+        XCTAssertEqual(
+            try XCTUnwrap(runs.first { $0.formula != nil }).formula?.latex,
+            "\\frac{\\pi}{4} = \\arctan(1)"
+        )
     }
 
     func testParserDecodesEquationQuerySpacesWhenAltIsMissing() throws {
@@ -232,10 +237,58 @@ final class QuestionAnswerFeatureTests: XCTestCase {
             from: #"<p><img src="https://www.zhihu.com/equation?tex=a+%2B+b"></p>"#
         )
 
-        guard case let .formula(_, latex) = try XCTUnwrap(blocks.first) else {
-            return XCTFail("expected the equation query to become a formula block")
+        guard case let .paragraph(_, runs) = try XCTUnwrap(blocks.first) else {
+            return XCTFail("expected the equation query to become an inline formula")
         }
-        XCTAssertEqual(latex, "a + b")
+        XCTAssertEqual(try XCTUnwrap(runs.first { $0.formula != nil }).formula?.latex, "a + b")
+    }
+
+    func testParserPromotesDisplayEquationImage() throws {
+        let blocks = QARichContentParser.blocks(
+            from: #"<p>before <img src="https://www.zhihu.com/equation?tex=x" alt="x" eeimg="2"/> after</p>"#
+        )
+
+        XCTAssertEqual(blocks.count, 3)
+        guard case let .formula(_, latex) = try XCTUnwrap(blocks.dropFirst().first) else {
+            return XCTFail("expected eeimg=2 to become a formula block")
+        }
+        XCTAssertEqual(latex, "x")
+    }
+
+    func testDisplayEquationSemanticsMatchUpstreamRules() {
+        XCTAssertTrue(QARichContentParser.isDisplayEquation("a\\\\b"))
+        XCTAssertTrue(QARichContentParser.isDisplayEquation("x^2+y^2=1\\tag{2}"))
+        XCTAssertTrue(QARichContentParser.isDisplayEquation("\\begin{align}a&=b\\\\c&=d\\end{align}"))
+        XCTAssertFalse(QARichContentParser.isDisplayEquation("\\begin{matrix}a\\\\b\\end{matrix}"))
+        XCTAssertFalse(QARichContentParser.isDisplayEquation("% \\tag{1}\nx=1"))
+    }
+
+    func testParserKeepsMatrixRowSeparatorInline() throws {
+        let blocks = QARichContentParser.blocks(
+            from: #"<p>before <img src="https://www.zhihu.com/equation?tex=x" alt="\begin{matrix}a\\b\end{matrix}" eeimg="1"/> after</p>"#
+        )
+
+        XCTAssertEqual(blocks.count, 1)
+        guard case let .paragraph(_, runs) = try XCTUnwrap(blocks.first) else {
+            return XCTFail("expected matrix-like equations to stay inline")
+        }
+        XCTAssertEqual(try XCTUnwrap(runs.first { $0.formula != nil }).formula?.isDisplay, false)
+    }
+
+    func testParserKeepsInlineEquationInsideListItem() throws {
+        let blocks = QARichContentParser.blocks(
+            from: #"<ul><li>直角边是静止能量 <img src="https://www.zhihu.com/equation?tex=m_0+c%5E2" alt="m_0 c^2" eeimg="1"/>。</li></ul>"#
+        )
+
+        guard case let .list(_, _, items) = try XCTUnwrap(blocks.first) else {
+            return XCTFail("expected a list")
+        }
+        let runs = try XCTUnwrap(items.first?.runs)
+        XCTAssertEqual(
+            try XCTUnwrap(runs.first { $0.formula != nil }).formula?.latex,
+            "m_0 c^2"
+        )
+        XCTAssertEqual(try XCTUnwrap(runs.first { $0.formula != nil }).formula?.isDisplay, false)
     }
 
     func testParserPreservesTrustedZhihuImageDimensionsBeforeLoading() throws {

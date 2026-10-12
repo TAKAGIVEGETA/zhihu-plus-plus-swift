@@ -50,13 +50,13 @@ struct QABodyView: View {
     private func blockView(_ block: QABodyBlock) -> some View {
         switch block {
         case let .paragraph(_, runs):
-            Text(QARichTextFormatter.attributed(runs))
+            QARichText(runs: runs, pointSize: bodyPointSize * presentation.fontScale)
                 .font(bodyFont)
                 .lineSpacing(bodyLineSpacing)
                 .tint(.accentColor)
                 .textSelection(.enabled)
         case let .heading(_, level, runs):
-            Text(QARichTextFormatter.attributed(runs))
+            QARichText(runs: runs, pointSize: headingPointSize(level))
                 .font(headingFont(level))
                 .fontWeight(.bold)
                 .textSelection(.enabled)
@@ -64,7 +64,7 @@ struct QABodyView: View {
         case let .quote(_, runs):
             HStack(alignment: .top, spacing: 12) {
                 Capsule().fill(.secondary.opacity(0.38)).frame(width: 3)
-                Text(QARichTextFormatter.attributed(runs))
+                QARichText(runs: runs, pointSize: bodyPointSize * presentation.fontScale)
                     .font(bodyFont)
                     .foregroundStyle(.secondary)
                     .lineSpacing(bodyLineSpacing)
@@ -79,7 +79,7 @@ struct QABodyView: View {
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
                             .frame(minWidth: 18, alignment: .trailing)
-                        Text(QARichTextFormatter.attributed(row.runs))
+                        QARichText(runs: row.runs, pointSize: bodyPointSize * presentation.fontScale)
                             .font(bodyFont)
                             .lineSpacing(bodyLineSpacing)
                             .tint(.accentColor)
@@ -126,7 +126,7 @@ struct QABodyView: View {
             if let segmentSubject,
                let subject = segmentCommentSubject(segmentSubject, segmentID: segmentID) {
                 HStack(alignment: .bottom, spacing: 7) {
-                    Text(QARichTextFormatter.attributed(runs))
+                    QARichText(runs: runs, pointSize: bodyPointSize * presentation.fontScale)
                         .font(bodyFont)
                         .lineSpacing(bodyLineSpacing)
                         .tint(.accentColor)
@@ -145,7 +145,7 @@ struct QABodyView: View {
                 }
             } else {
                 HStack(alignment: .bottom, spacing: 7) {
-                    Text(QARichTextFormatter.attributed(runs))
+                    QARichText(runs: runs, pointSize: bodyPointSize * presentation.fontScale)
                         .font(bodyFont)
                         .lineSpacing(bodyLineSpacing)
                         .tint(.accentColor)
@@ -169,6 +169,16 @@ struct QABodyView: View {
 
     private var bodyFont: Font {
         .system(size: bodyPointSize * presentation.fontScale)
+    }
+
+    private func headingPointSize(_ level: Int) -> CGFloat {
+        let scale = presentation.fontScale
+        switch level {
+        case 1: return 22 * scale
+        case 2: return 20 * scale
+        case 3: return 17 * scale
+        default: return bodyPointSize * scale
+        }
     }
 
     private var bodyLineSpacing: CGFloat {
@@ -246,6 +256,75 @@ struct QABodyView: View {
             playbackURL: video.playbackURL,
             webURL: video.destinationURL
         )
+    }
+}
+
+private struct QARichText: View {
+    let runs: [QAInlineRun]
+    let pointSize: CGFloat
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
+    @State private var renderedImages: [UUID: UIImage] = [:]
+    @State private var failedRunIDs: Set<UUID> = []
+
+    private var requestsByID: [UUID: QAKaTeXRenderRequest] {
+        runs.reduce(into: [:]) { requests, run in
+            guard let formula = run.formula else { return }
+            requests[run.id] = QAKaTeXRenderRequest(
+                latex: formula.latex,
+                pointSize: min(
+                    max(pointSize, QAKaTeXRenderPolicy.minimumPointSize),
+                    QAKaTeXRenderPolicy.maximumPointSize
+                ),
+                color: colorScheme == .dark ? .darkForeground : .lightForeground,
+                scale: min(
+                    max(displayScale, QAKaTeXRenderPolicy.minimumScale),
+                    QAKaTeXRenderPolicy.maximumScale
+                ),
+                isDarkMode: colorScheme == .dark
+            )
+        }
+    }
+
+    private var requestKey: String {
+        requestsByID.values.map(\.cacheKey).sorted().joined(separator: "|")
+    }
+
+    var body: some View {
+        content
+            .task(id: requestKey) {
+                for run in runs where run.formula != nil {
+                    guard let request = requestsByID[run.id] else { continue }
+                    guard renderedImages[run.id] == nil, !failedRunIDs.contains(run.id) else { continue }
+                    do {
+                        renderedImages[run.id] = try await QAKaTeXRenderService.shared.render(request)
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        failedRunIDs.insert(run.id)
+                    }
+                }
+            }
+    }
+
+    private var content: Text {
+        runs.reduce(Text("")) { accumulated, run in
+            accumulated + text(for: run)
+        }
+    }
+
+    private func text(for run: QAInlineRun) -> Text {
+        guard let formula = run.formula else {
+            return Text(QARichTextFormatter.attributed([run]))
+        }
+        guard let image = renderedImages[run.id] else {
+            return Text(QARichTextFormatter.attributed([run]))
+        }
+
+        let centeringOffset = max(0, image.size.height - pointSize * 0.72) / 2
+        return Text(Image(uiImage: image))
+            .baselineOffset(-centeringOffset)
     }
 }
 
