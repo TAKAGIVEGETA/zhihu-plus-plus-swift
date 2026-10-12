@@ -127,8 +127,9 @@ final class KaTeXResourceTests: XCTestCase {
         XCTAssertFalse(script.contains("XMLHttpRequest"))
         XCTAssertTrue(styleSheet.contains(".katex-display"))
         XCTAssertTrue(styleSheet.contains("margin: 0"))
-        XCTAssertTrue(styleSheet.contains("padding: 2px 0.35em 2px 2px"))
-        XCTAssertTrue(script.contains("Math.ceil(measuredWidth) + 4"))
+        XCTAssertTrue(styleSheet.contains("padding: 2px 0.15em 2px 2px"))
+        XCTAssertTrue(script.contains("request.isBlockLayout ? \"0.35em\" : \"0.15em\""))
+        XCTAssertTrue(script.contains("const widthSafety = request.isBlockLayout ? 4 : 1"))
     }
 
     func testUntrustedKaTeXCommandsCannotCreateLinksImagesOrCustomHTML() throws {
@@ -198,6 +199,7 @@ final class KaTeXResourceTests: XCTestCase {
             renderRequest(color: .darkForeground, isDarkMode: true).cacheKey
         )
         XCTAssertNotEqual(baseline.cacheKey, renderRequest(displayMode: false).cacheKey)
+        XCTAssertNotEqual(baseline.cacheKey, renderRequest(isBlockLayout: true).cacheKey)
     }
 
     func testMissingResourceIsReportedBeforeRendering() throws {
@@ -281,7 +283,8 @@ final class KaTeXResourceTests: XCTestCase {
         color: QAKaTeXRenderColor = .lightForeground,
         scale: CGFloat = 2,
         isDarkMode: Bool = false,
-        displayMode: Bool = true
+        displayMode: Bool = true,
+        isBlockLayout: Bool = false
     ) -> QAKaTeXRenderRequest {
         QAKaTeXRenderRequest(
             latex: #"x^2+\frac{1}{2}"#,
@@ -289,7 +292,8 @@ final class KaTeXResourceTests: XCTestCase {
             color: color,
             scale: scale,
             isDarkMode: isDarkMode,
-            displayMode: displayMode
+            displayMode: displayMode,
+            isBlockLayout: isBlockLayout
         )
     }
 

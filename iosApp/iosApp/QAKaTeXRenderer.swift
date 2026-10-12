@@ -98,6 +98,7 @@ struct QAKaTeXRenderRequest: Hashable, Sendable {
     let scale: CGFloat
     let isDarkMode: Bool
     let displayMode: Bool
+    let isBlockLayout: Bool
 
     init(
         latex: String,
@@ -105,7 +106,8 @@ struct QAKaTeXRenderRequest: Hashable, Sendable {
         color: QAKaTeXRenderColor,
         scale: CGFloat,
         isDarkMode: Bool,
-        displayMode: Bool = true
+        displayMode: Bool = true,
+        isBlockLayout: Bool = false
     ) {
         self.latex = latex
         self.pointSize = pointSize
@@ -113,6 +115,7 @@ struct QAKaTeXRenderRequest: Hashable, Sendable {
         self.scale = scale
         self.isDarkMode = isDarkMode
         self.displayMode = displayMode
+        self.isBlockLayout = isBlockLayout
     }
 
     var cacheKey: String {
@@ -129,6 +132,7 @@ struct QAKaTeXRenderRequest: Hashable, Sendable {
             String(scaleKey),
             isDarkMode ? "dark" : "light",
             displayMode ? "display" : "inline",
+            isBlockLayout ? "block-layout" : "inline-layout",
         ].joined(separator: "|")
     }
 }
@@ -363,6 +367,7 @@ private final class QAKaTeXWebEngine: NSObject, WKNavigationDelegate, WKUIDelega
                 "pointSize": request.pointSize,
                 "color": request.color.cssValue,
                 "displayMode": request.displayMode,
+                "isBlockLayout": request.isBlockLayout,
                 "accessibilityLabel": QALatexReadableText.render(request.latex),
             ],
         ]
@@ -500,7 +505,8 @@ struct QAKaTeXFormulaView: View {
                 QAKaTeXRenderPolicy.maximumScale
             ),
             isDarkMode: colorScheme == .dark,
-            displayMode: displayMode
+            displayMode: displayMode,
+            isBlockLayout: true
         )
     }
 

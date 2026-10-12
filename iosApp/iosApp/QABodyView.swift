@@ -293,7 +293,8 @@ private struct QARichText: View {
                     QAKaTeXRenderPolicy.maximumScale
                 ),
                 isDarkMode: colorScheme == .dark,
-                displayMode: run.formula?.isDisplay ?? true
+                displayMode: run.formula?.isDisplay ?? true,
+                isBlockLayout: false
             )
         }
     }

@@ -5,6 +5,7 @@ window.renderFormula = async function(request) {
   output.replaceChildren();
   output.style.fontSize = request.pointSize + "px";
   output.style.color = request.color;
+  output.style.paddingRight = request.isBlockLayout ? "0.35em" : "0.15em";
   output.setAttribute("aria-label", request.accessibilityLabel);
 
   try {
@@ -20,9 +21,10 @@ window.renderFormula = async function(request) {
     await document.fonts.ready;
     const rect = output.getBoundingClientRect();
     const measuredWidth = Math.max(rect.width, output.scrollWidth);
+    const widthSafety = request.isBlockLayout ? 4 : 1;
     return {
       ok: true,
-      width: Math.ceil(measuredWidth) + 4,
+      width: Math.ceil(measuredWidth) + widthSafety,
       height: Math.ceil(rect.height)
     };
   } catch (error) {
