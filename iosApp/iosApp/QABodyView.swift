@@ -50,11 +50,21 @@ struct QABodyView: View {
     private func blockView(_ block: QABodyBlock) -> some View {
         switch block {
         case let .paragraph(_, runs):
-            QARichText(runs: runs, pointSize: bodyPointSize * presentation.fontScale)
-                .font(bodyFont)
-                .lineSpacing(bodyLineSpacing)
-                .tint(.accentColor)
-                .textSelection(.enabled)
+            if let formula = runs.first?.formula,
+               runs.count == 1,
+               !formula.isDisplay {
+                QAKaTeXFormulaView(
+                    latex: formula.latex,
+                    pointSize: bodyPointSize * presentation.fontScale,
+                    displayMode: false
+                )
+            } else {
+                QARichText(runs: runs, pointSize: bodyPointSize * presentation.fontScale)
+                    .font(bodyFont)
+                    .lineSpacing(bodyLineSpacing)
+                    .tint(.accentColor)
+                    .textSelection(.enabled)
+            }
         case let .heading(_, level, runs):
             QARichText(runs: runs, pointSize: headingPointSize(level))
                 .font(headingFont(level))

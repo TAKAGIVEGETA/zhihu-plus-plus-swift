@@ -474,6 +474,13 @@ private enum QAKaTeXFormulaPhase {
 struct QAKaTeXFormulaView: View {
     let latex: String
     let pointSize: CGFloat
+    let displayMode: Bool
+
+    init(latex: String, pointSize: CGFloat, displayMode: Bool = true) {
+        self.latex = latex
+        self.pointSize = pointSize
+        self.displayMode = displayMode
+    }
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
@@ -492,7 +499,8 @@ struct QAKaTeXFormulaView: View {
                 max(displayScale, QAKaTeXRenderPolicy.minimumScale),
                 QAKaTeXRenderPolicy.maximumScale
             ),
-            isDarkMode: colorScheme == .dark
+            isDarkMode: colorScheme == .dark,
+            displayMode: displayMode
         )
     }
 
