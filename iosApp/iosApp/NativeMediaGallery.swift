@@ -777,6 +777,7 @@ struct NativeAnimatedRemoteImage: View {
                 }
             }
         }
+        .contentShape(Rectangle())
         .task(id: url) { await loader.load(url) }
         .accessibilityLabel("动图")
     }
