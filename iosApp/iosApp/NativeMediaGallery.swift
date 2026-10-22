@@ -17,6 +17,7 @@ struct NativeMediaGallery: View {
     @State private var shareItems: NativeMediaActivityItems?
     @State private var message: NativeMediaMessage?
     @State private var isSaving = false
+    @State private var isInputReady = false
 
     init(urls: [URL], initialIndex: Int, accessibilityPrefix: String = "media_gallery") {
         self.urls = urls
@@ -26,36 +27,34 @@ struct NativeMediaGallery: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black
-                    .opacity(backgroundOpacity(viewportHeight: geometry.size.height))
-                    .ignoresSafeArea()
+        ZStack {
+            Color.black
+                .opacity(backgroundOpacity())
+                .ignoresSafeArea()
 
-                pager
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .ignoresSafeArea()
+            pager
+                .ignoresSafeArea()
 
-                if urls.count > 1 {
-                    VStack {
-                        Spacer()
-                        Text("\(selectedIndex + 1) / \(urls.count)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.white)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .frame(minWidth: 54)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 7)
-                            .modifier(NativeMediaIndicatorSurface())
-                            .padding(.bottom, 18)
-                    }
-                    .allowsHitTesting(false)
+            if urls.count > 1 {
+                VStack {
+                    Spacer()
+                    Text("\(selectedIndex + 1) / \(urls.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 54)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 7)
+                        .modifier(NativeMediaIndicatorSurface())
+                        .padding(.bottom, 18)
                 }
+                .allowsHitTesting(false)
             }
-            .clipped()
         }
+        .clipped()
         .background(Color.black.ignoresSafeArea())
         .overlay(alignment: .top) { topControls }
+        .allowsHitTesting(isInputReady)
         .preferredColorScheme(.dark)
         .sheet(item: $shareItems) { items in
             NativeMediaActivityView(activityItems: items.values)
@@ -69,6 +68,11 @@ struct NativeMediaGallery: View {
         }
         .onChange(of: selectedIndex) { _ in
             hapticFeedback(.selection)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                isInputReady = true
+            }
         }
         .accessibilityIdentifier(accessibilityPrefix)
     }
@@ -94,6 +98,7 @@ struct NativeMediaGallery: View {
             image: imageStore.image(for: url),
             didFail: imageStore.didFail(url),
             isCurrentPage: index == selectedIndex,
+            isInputReady: isInputReady,
             onZoomChanged: { isZoomed in
                 if isZoomed {
                     zoomedIndices.insert(index)
@@ -191,8 +196,8 @@ struct NativeMediaGallery: View {
 
     private var isCurrentImageZoomed: Bool { zoomedIndices.contains(selectedIndex) }
 
-    private func backgroundOpacity(viewportHeight: CGFloat) -> Double {
-        let fadeDistance = max(viewportHeight * 0.3, 1)
+    private func backgroundOpacity() -> Double {
+        let fadeDistance: CGFloat = 300
         return 1 - min(abs(dismissOffset) / fadeDistance, 1) * 0.55
     }
 
@@ -268,6 +273,7 @@ private struct NativeZoomableRemoteImage: UIViewControllerRepresentable {
     let image: UIImage?
     let didFail: Bool
     let isCurrentPage: Bool
+    let isInputReady: Bool
     let onZoomChanged: (Bool) -> Void
     let onDismissProgress: (CGFloat) -> Void
     let onSingleTap: () -> Void
@@ -280,6 +286,7 @@ private struct NativeZoomableRemoteImage: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: NativeZoomImageController, context: Context) {
         controller.isCurrentPage = isCurrentPage
+        controller.updateInputState(isReadyForInput: isInputReady)
         controller.updateContent(image: image, didFail: didFail)
         controller.updateCallbacks(
             onZoomChanged: onZoomChanged,
@@ -447,18 +454,6 @@ private final class NativeZoomImageController: UIViewController,
         updateContentVisibility()
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        // A fullScreenCover can expose a touch that began on the originating
-        // image to the newly installed preview. Keep the first beat quiet so
-        // the opening tap cannot become an immediate tap-or-drag dismissal.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self, self.viewIfLoaded?.window != nil else { return }
-            self.isReadyForInput = true
-            self.startAnimatedImageIfNeeded()
-        }
-    }
-
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         isReadyForInput = false
@@ -576,6 +571,13 @@ private final class NativeZoomImageController: UIViewController,
         self.onRetry = onRetry
     }
 
+    func updateInputState(isReadyForInput: Bool) {
+        self.isReadyForInput = isReadyForInput
+        if isReadyForInput {
+            startAnimatedImageIfNeeded()
+        }
+    }
+
     func prepareForRemoval() {
         imageView.stopAnimating()
         onZoomChanged = nil
@@ -609,7 +611,9 @@ private final class NativeZoomImageController: UIViewController,
     }
 
     @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
+        guard recognizer.state == .ended,
+              isReadyForInput
+        else { return }
         let targetScale = NativeMediaZoomPolicy.doubleTapTarget(
             currentScale: scrollView.zoomScale
         )

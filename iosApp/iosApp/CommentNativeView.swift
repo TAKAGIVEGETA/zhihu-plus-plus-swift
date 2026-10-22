@@ -96,18 +96,6 @@ private struct CommentThreadContainer: View {
                 close: closeReplies
             )
         }
-        .fullScreenCover(
-            item: Binding(
-                get: { store.galleryDestination },
-                set: { store.galleryBindingChanged(to: $0) }
-            )
-        ) { destination in
-            NativeMediaGallery(
-                urls: destination.urls,
-                initialIndex: destination.initialIndex,
-                accessibilityPrefix: "comment_media"
-            )
-        }
         .alert(
             item: Binding(
                 get: { store.message },
@@ -170,6 +158,7 @@ private struct CommentReplySheetView: View {
     let close: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.nativeHapticFeedback) private var hapticFeedback
+    @State private var isDismissInputReady = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -180,12 +169,18 @@ private struct CommentReplySheetView: View {
                     }
             }
             .contentShape(Rectangle())
-            .simultaneousGesture(edgeDismissGesture(containerWidth: geometry.size.width))
+            .simultaneousGesture(dismissGesture(containerSize: geometry.size))
         }
+        .allowsHitTesting(isDismissInputReady)
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .modifier(CommentSheetPresentationModifier())
+        .interactiveDismissDisabled(true)
         .accessibilityIdentifier("comment_reply_sheet")
-        .onDisappear(perform: close)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                isDismissInputReady = true
+            }
+        }
     }
 
     private var personBinding: Binding<Bool> {
@@ -199,14 +194,15 @@ private struct CommentReplySheetView: View {
         )
     }
 
-    private func edgeDismissGesture(containerWidth: CGFloat) -> some Gesture {
+    private func dismissGesture(containerSize: CGSize) -> some Gesture {
         DragGesture(minimumDistance: CommentReplySheetSwipePolicy.minimumDistance)
             .onEnded { value in
-                guard CommentReplySheetSwipePolicy.shouldDismiss(
-                    startLocation: value.startLocation,
-                    translation: value.translation,
-                    predictedEndTranslation: value.predictedEndTranslation,
-                    containerWidth: containerWidth
+                guard isDismissInputReady,
+                      CommentReplySheetSwipePolicy.shouldDismiss(
+                        startLocation: value.startLocation,
+                        translation: value.translation,
+                        predictedEndTranslation: value.predictedEndTranslation,
+                        containerSize: containerSize
                 ) else { return }
                 CommentReplySheetFeedback(action: hapticFeedback).edgeDismissDidCommit(true)
                 var transaction = Transaction()
@@ -230,23 +226,43 @@ struct CommentReplySheetSwipePolicy {
     static let minimumDistance: CGFloat = 14
     static let leadingEdgeWidth: CGFloat = 44
     static let horizontalIntentRatio: CGFloat = 1.25
+    static let verticalIntentRatio: CGFloat = 1.25
     static let minimumCommitDistance: CGFloat = 72
     static let commitWidthRatio: CGFloat = 0.22
+    static let topDismissBandHeight: CGFloat = 120
+    static let minimumVerticalCommitDistance: CGFloat = 72
+    static let commitHeightRatio: CGFloat = 0.12
 
     static func shouldDismiss(
         startLocation: CGPoint,
         translation: CGSize,
         predictedEndTranslation: CGSize,
-        containerWidth: CGFloat
+        containerSize: CGSize
     ) -> Bool {
-        guard containerWidth > 0,
-              startLocation.x <= leadingEdgeWidth,
-              translation.width > 0,
-              translation.width > abs(translation.height) * horizontalIntentRatio
+        guard containerSize.width > 0,
+              containerSize.height > 0
         else { return false }
 
-        let threshold = max(minimumCommitDistance, containerWidth * commitWidthRatio)
-        return translation.width >= threshold || predictedEndTranslation.width >= threshold
+        if startLocation.x <= leadingEdgeWidth,
+           translation.width > abs(translation.height) * horizontalIntentRatio {
+            let widthThreshold = max(
+                minimumCommitDistance,
+                containerSize.width * commitWidthRatio
+            )
+            return translation.width >= widthThreshold ||
+                predictedEndTranslation.width >= widthThreshold
+        }
+
+        guard startLocation.y <= topDismissBandHeight,
+              translation.height > abs(translation.width) * verticalIntentRatio
+        else { return false }
+
+        let heightThreshold = max(
+            minimumVerticalCommitDistance,
+            containerSize.height * commitHeightRatio
+        )
+        return translation.height >= heightThreshold ||
+            predictedEndTranslation.height >= heightThreshold
     }
 }
 
@@ -322,6 +338,24 @@ private struct CommentLevelView: View {
         .sheet(item: $posterDocument) { document in
             NativeContentPosterShareView(document: document)
         }
+        .fullScreenCover(item: galleryBinding) { destination in
+            NativeMediaGallery(
+                urls: destination.urls,
+                initialIndex: destination.initialIndex,
+                accessibilityPrefix: "comment_media"
+            )
+        }
+    }
+
+    private var galleryBinding: Binding<CommentMediaGalleryDestination?> {
+        Binding(
+            get: {
+                store.activeLevel == level ? store.galleryDestination : nil
+            },
+            set: { destination in
+                store.galleryBindingChanged(to: destination)
+            }
+        )
     }
 
     private var coordinateSpaceName: String {

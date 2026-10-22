@@ -207,19 +207,46 @@ final class CommentStoreTests: XCTestCase {
             startLocation: CGPoint(x: 20, y: 200),
             translation: CGSize(width: 120, height: 20),
             predictedEndTranslation: CGSize(width: 150, height: 24),
-            containerWidth: 390
+            containerSize: CGSize(width: 390, height: 800)
         ))
         XCTAssertFalse(CommentReplySheetSwipePolicy.shouldDismiss(
             startLocation: CGPoint(x: 20, y: 200),
             translation: CGSize(width: 40, height: 120),
             predictedEndTranslation: CGSize(width: 80, height: 180),
-            containerWidth: 390
+            containerSize: CGSize(width: 390, height: 800)
         ))
         XCTAssertFalse(CommentReplySheetSwipePolicy.shouldDismiss(
             startLocation: CGPoint(x: 100, y: 200),
             translation: CGSize(width: 140, height: 10),
             predictedEndTranslation: CGSize(width: 180, height: 12),
-            containerWidth: 390
+            containerSize: CGSize(width: 390, height: 800)
+        ))
+    }
+
+    func testReplySheetSwipeDismissSupportsTopVerticalSwipe() {
+        XCTAssertTrue(CommentReplySheetSwipePolicy.shouldDismiss(
+            startLocation: CGPoint(x: 180, y: 40),
+            translation: CGSize(width: 20, height: 160),
+            predictedEndTranslation: CGSize(width: 24, height: 200),
+            containerSize: CGSize(width: 390, height: 800)
+        ))
+        XCTAssertFalse(CommentReplySheetSwipePolicy.shouldDismiss(
+            startLocation: CGPoint(x: 180, y: 200),
+            translation: CGSize(width: 20, height: 160),
+            predictedEndTranslation: CGSize(width: 24, height: 200),
+            containerSize: CGSize(width: 390, height: 800)
+        ))
+        XCTAssertFalse(CommentReplySheetSwipePolicy.shouldDismiss(
+            startLocation: CGPoint(x: 180, y: 40),
+            translation: CGSize(width: 160, height: 20),
+            predictedEndTranslation: CGSize(width: 200, height: 24),
+            containerSize: CGSize(width: 390, height: 800)
+        ))
+        XCTAssertTrue(CommentReplySheetSwipePolicy.shouldDismiss(
+            startLocation: CGPoint(x: 180, y: 40),
+            translation: CGSize(width: 0, height: 160),
+            predictedEndTranslation: CGSize(width: 0, height: 200),
+            containerSize: CGSize(width: 390, height: 800)
         ))
     }
 
