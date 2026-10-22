@@ -23,6 +23,14 @@ jobs:
       - name: Verify Xcode
         run: xcodebuild -version
 
+      - name: Build test bundle
+        run: |
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -destination 'generic/platform=iOS Simulator' \
+            build-for-testing
+
       - name: Package unsigned IPA
         run: |
           BUNDLE_ID=com.github.zly2006.zhplus.ios \

@@ -345,6 +345,7 @@ private final class NativeZoomImageController: UIViewController,
     private var lastReportedZoomed = false
     private var activeDismissAxis: NativeMediaDismissAxis?
     private var isCompletingDismissGesture = false
+    private var isReadyForInput = false
 
     var isCurrentPage = true
     var onZoomChanged: ((Bool) -> Void)?
@@ -358,6 +359,11 @@ private final class NativeZoomImageController: UIViewController,
         rootView.backgroundColor = .black
         view = rootView
 
+        // The explicit full-screen constraints below own this view's frame.
+        // Leaving the default autoresizing translation enabled can fight those
+        // constraints during modal presentation and produce a zero-sized,
+        // completely black preview surface.
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .black
         scrollView.delegate = self
         scrollView.minimumZoomScale = NativeMediaZoomPolicy.minimumScale
@@ -441,6 +447,24 @@ private final class NativeZoomImageController: UIViewController,
         updateContentVisibility()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // A fullScreenCover can expose a touch that began on the originating
+        // image to the newly installed preview. Keep the first beat quiet so
+        // the opening tap cannot become an immediate tap-or-drag dismissal.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, self.viewIfLoaded?.window != nil else { return }
+            self.isReadyForInput = true
+            self.startAnimatedImageIfNeeded()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        isReadyForInput = false
+        imageView.stopAnimating()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let viewportSize = scrollView.bounds.size
@@ -497,6 +521,7 @@ private final class NativeZoomImageController: UIViewController,
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === dismissPanGestureRecognizer,
               isCurrentPage,
+              isReadyForInput,
               isCompletingDismissGesture == false,
               NativeMediaZoomPolicy.isZoomed(scrollView.zoomScale) == false,
               NativeMediaDismissalPolicy.isVerticalVelocity(
@@ -525,11 +550,11 @@ private final class NativeZoomImageController: UIViewController,
         self.didFail = didFail
 
         if imageChanged {
-            imageView.stopAnimating()
-            imageView.image = image
-            if let image, (image.images?.count ?? 1) > 1 {
-                imageView.startAnimating()
-            }
+            NativeAnimatedImageInstaller.apply(
+                image,
+                to: imageView,
+                startsWhenPossible: viewIfLoaded?.window != nil
+            )
             if image != nil {
                 resetZoom(animated: false)
             }
@@ -571,8 +596,13 @@ private final class NativeZoomImageController: UIViewController,
         }
     }
 
+    private func startAnimatedImageIfNeeded() {
+        NativeAnimatedImageInstaller.startIfNeeded(on: imageView)
+    }
+
     @objc private func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended,
+              isReadyForInput,
               isCompletingDismissGesture == false
         else { return }
         onSingleTap?()
@@ -748,6 +778,56 @@ struct NativeAnimatedRemoteImage: View {
     }
 }
 
+enum NativeMediaImageRequestFactory {
+    static func make(for url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue(
+            ZhihuAPIClient.defaultUserAgent,
+            forHTTPHeaderField: "User-Agent"
+        )
+        return request
+    }
+}
+
+@MainActor
+enum NativeAnimatedImageInstaller {
+    static func apply(
+        _ image: UIImage?,
+        to imageView: UIImageView,
+        startsWhenPossible: Bool
+    ) {
+        imageView.stopAnimating()
+
+        guard let image else {
+            imageView.animationImages = nil
+            imageView.animationDuration = 0
+            imageView.image = nil
+            return
+        }
+
+        let frames = image.images ?? []
+        if frames.count > 1 {
+            imageView.animationImages = frames
+            imageView.animationDuration = image.duration
+            imageView.image = frames.first ?? image
+            if startsWhenPossible {
+                imageView.startAnimating()
+            }
+        } else {
+            imageView.animationImages = nil
+            imageView.animationDuration = 0
+            imageView.image = image
+        }
+    }
+
+    static func startIfNeeded(on imageView: UIImageView) {
+        guard (imageView.animationImages?.count ?? 1) > 1,
+              imageView.isAnimating == false
+        else { return }
+        imageView.startAnimating()
+    }
+}
+
 private struct NativeAnimatedUIImageView: UIViewRepresentable {
     let image: UIImage
     let contentMode: ContentMode
@@ -761,10 +841,17 @@ private struct NativeAnimatedUIImageView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIImageView, context: Context) {
         uiView.contentMode = contentMode == .fill ? .scaleAspectFill : .scaleAspectFit
-        guard uiView.image !== image else { return }
-        uiView.stopAnimating()
-        uiView.image = image
-        uiView.startAnimating()
+        let frames = image.images ?? []
+        let currentFrame = frames.count > 1
+            ? uiView.animationImages?.first
+            : uiView.image
+        let newFrame = frames.first ?? image
+        guard currentFrame !== newFrame else { return }
+        NativeAnimatedImageInstaller.apply(image, to: uiView, startsWhenPossible: true)
+    }
+
+    static func dismantleUIView(_ uiView: UIImageView, coordinator: ()) {
+        NativeAnimatedImageInstaller.apply(nil, to: uiView, startsWhenPossible: false)
     }
 }
 
@@ -780,7 +867,9 @@ private final class NativeAnimatedImageLoader: ObservableObject {
         image = nil
         didFail = false
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await URLSession.shared.data(
+                for: NativeMediaImageRequestFactory.make(for: url)
+            )
             try Task.checkCancellation()
             guard let response = response as? HTTPURLResponse,
                   (200..<300).contains(response.statusCode),
@@ -837,11 +926,36 @@ enum NativeAnimatedImageDecoder {
 
     private static func frameDuration(source: CGImageSource, index: Int) -> TimeInterval {
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil)
-            as? [CFString: Any],
-              let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+            as? [CFString: Any]
         else { return 0.1 }
-        let unclamped = (gif[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber)?.doubleValue
-        let clamped = (gif[kCGImagePropertyGIFDelayTime] as? NSNumber)?.doubleValue
+        return frameDuration(properties: properties)
+    }
+
+    static func frameDuration(properties: [CFString: Any]) -> TimeInterval {
+        if let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] {
+            return normalizedDelay(
+                unclamped: gif[kCGImagePropertyGIFUnclampedDelayTime],
+                clamped: gif[kCGImagePropertyGIFDelayTime]
+            )
+        }
+        if let webp = properties[kCGImagePropertyWebPDictionary] as? [CFString: Any] {
+            return normalizedDelay(
+                unclamped: webp[kCGImagePropertyWebPUnclampedDelayTime],
+                clamped: webp[kCGImagePropertyWebPDelayTime]
+            )
+        }
+        if let apng = properties[kCGImagePropertyPNGDictionary] as? [CFString: Any] {
+            return normalizedDelay(
+                unclamped: apng[kCGImagePropertyAPNGUnclampedDelayTime],
+                clamped: apng[kCGImagePropertyAPNGDelayTime]
+            )
+        }
+        return 0.1
+    }
+
+    private static func normalizedDelay(unclamped: Any?, clamped: Any?) -> TimeInterval {
+        let unclamped = (unclamped as? NSNumber)?.doubleValue
+        let clamped = (clamped as? NSNumber)?.doubleValue
         let value = unclamped ?? clamped ?? 0.1
         return value < 0.02 ? 0.1 : value
     }
@@ -939,7 +1053,9 @@ private final class NativeMediaImageStore: ObservableObject {
         } else {
             failedURLs.remove(url)
             operation = LoadOperation(task: Task {
-                let (data, response) = try await URLSession.shared.data(from: url)
+                let (data, response) = try await URLSession.shared.data(
+                    for: NativeMediaImageRequestFactory.make(for: url)
+                )
                 guard let response = response as? HTTPURLResponse,
                       (200..<300).contains(response.statusCode)
                 else { throw URLError(.badServerResponse) }

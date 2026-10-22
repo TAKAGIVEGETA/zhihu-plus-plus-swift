@@ -79,6 +79,7 @@ final class NativeMediaGalleryTests: XCTestCase {
         ))
     }
 
+    @MainActor
     func testAnimatedImageDecoderPreservesGIFFramesAndDuration() throws {
         let data = NSMutableData()
         let destination = try XCTUnwrap(CGImageDestinationCreateWithData(
@@ -113,6 +114,50 @@ final class NativeMediaGalleryTests: XCTestCase {
         let image = try XCTUnwrap(NativeAnimatedImageDecoder.decode(data as Data))
         XCTAssertEqual(image.images?.count, 2)
         XCTAssertEqual(image.duration, 0.16, accuracy: 0.001)
+
+        let imageView = UIImageView()
+        NativeAnimatedImageInstaller.apply(
+            image,
+            to: imageView,
+            startsWhenPossible: false
+        )
+        XCTAssertEqual(imageView.animationImages?.count, 2)
+        XCTAssertEqual(imageView.animationDuration, 0.16, accuracy: 0.001)
+        XCTAssertEqual(imageView.image, image.images?.first)
+    }
+
+    func testAnimatedImageDecoderReadsWebPAndAPNGFrameDurations() {
+        let webpProperties: [CFString: Any] = [
+            kCGImagePropertyWebPDictionary: [
+                kCGImagePropertyWebPUnclampedDelayTime: 0.12
+            ]
+        ]
+        let apngProperties: [CFString: Any] = [
+            kCGImagePropertyPNGDictionary: [
+                kCGImagePropertyAPNGDelayTime: 0.07
+            ]
+        ]
+
+        XCTAssertEqual(
+            NativeAnimatedImageDecoder.frameDuration(properties: webpProperties),
+            0.12,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            NativeAnimatedImageDecoder.frameDuration(properties: apngProperties),
+            0.07,
+            accuracy: 0.001
+        )
+    }
+
+    func testImageRequestsUseZhihuBrowserUserAgent() throws {
+        let url = try XCTUnwrap(URL(string: "https://pic.zhimg.com/demo.gif"))
+        let request = NativeMediaImageRequestFactory.make(for: url)
+
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "User-Agent"),
+            ZhihuAPIClient.defaultUserAgent
+        )
     }
 
     func testPagingUsesViewportWidthAndStopsAtBothBoundaries() {
