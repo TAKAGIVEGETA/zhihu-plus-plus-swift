@@ -181,8 +181,8 @@ final class QuestionAnswerFeatureTests: XCTestCase {
             XCTAssertTrue(runs.contains { $0.link == .question(7) })
         }
         XCTAssertTrue(blocks.contains { if case .quote = $0 { return true }; return false })
-        XCTAssertTrue(blocks.contains { if case .list(_, .ordered, let items) = $0 { return items.count == 2 }; return false })
-        XCTAssertTrue(blocks.contains { if case .code(_, "swift", let text) = $0 { return text.contains("let value") }; return false })
+        XCTAssertTrue(blocks.contains { if case .list(_, kind: .ordered, items: let items) = $0 { return items.count == 2 }; return false })
+        XCTAssertTrue(blocks.contains { if case .code(_, language: "swift", text: let text) = $0 { return text.contains("let value") }; return false })
         XCTAssertTrue(blocks.contains { if case .formula(_, "x^2+y^2") = $0 { return true }; return false })
         XCTAssertTrue(blocks.contains {
             if case let .image(image) = $0 { return image.caption == "图注" && image.url.host == "pic.zhimg.com" }
@@ -203,8 +203,8 @@ final class QuestionAnswerFeatureTests: XCTestCase {
         )
         let blocks: [QABodyBlock] = [
             .paragraph(UUID(), [QAInlineRun(text: "第一段")]),
-            .list(UUID(), .ordered, [item]),
-            .code(UUID(), "swift", "let value = 1"),
+            .list(UUID(), kind: .ordered, items: [item]),
+            .code(UUID(), language: "swift", text: "let value = 1"),
             .formula(UUID(), latex: "x^2+y^2"),
             .image(QAImageDTO(
                 url: URL(string: "https://pic.zhimg.com/example.jpg")!,

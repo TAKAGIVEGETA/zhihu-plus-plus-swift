@@ -13,7 +13,6 @@ struct NativeMediaGallery: View {
     @State private var selectedIndex: Int
     @StateObject private var imageStore = NativeMediaImageStore()
     @State private var zoomedIndices: Set<Int> = []
-    @State private var pageDragOffset: CGFloat = 0
     @State private var dismissOffset: CGFloat = 0
     @State private var shareItems: NativeMediaActivityItems?
     @State private var message: NativeMediaMessage?
@@ -33,26 +32,9 @@ struct NativeMediaGallery: View {
                     .opacity(backgroundOpacity(viewportHeight: geometry.size.height))
                     .ignoresSafeArea()
 
-                HStack(spacing: 0) {
-                    ForEach(urls.indices, id: \.self) { index in
-                        NativeZoomableRemoteImage(
-                            url: urls[index],
-                            store: imageStore,
-                            onZoomChanged: { isZoomed in
-                                if isZoomed { zoomedIndices.insert(index) } else { zoomedIndices.remove(index) }
-                            }
-                        )
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                    }
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
-                .offset(
-                    x: -CGFloat(selectedIndex) * geometry.size.width + pageDragOffset,
-                    y: dismissOffset
-                )
-                .contentShape(Rectangle())
-                .simultaneousGesture(horizontalPagingGesture(pageWidth: geometry.size.width))
-                .simultaneousGesture(verticalDismissGesture(viewportHeight: geometry.size.height))
+                pager
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .ignoresSafeArea()
 
                 if urls.count > 1 {
                     VStack {
@@ -85,7 +67,58 @@ struct NativeMediaGallery: View {
                 dismissButton: .default(Text("知道了"))
             )
         }
+        .onChange(of: selectedIndex) { _ in
+            hapticFeedback(.selection)
+        }
         .accessibilityIdentifier(accessibilityPrefix)
+    }
+
+    @ViewBuilder
+    private var pager: some View {
+        if urls.count == 1, let url = urls.first {
+            page(url: url, index: 0)
+        } else {
+            TabView(selection: $selectedIndex) {
+                ForEach(urls.indices, id: \.self) { index in
+                    page(url: urls[index], index: index)
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+        }
+    }
+
+    private func page(url: URL, index: Int) -> some View {
+        NativeZoomableRemoteImage(
+            url: url,
+            image: imageStore.image(for: url),
+            didFail: imageStore.didFail(url),
+            isCurrentPage: index == selectedIndex,
+            onZoomChanged: { isZoomed in
+                if isZoomed {
+                    zoomedIndices.insert(index)
+                } else {
+                    zoomedIndices.remove(index)
+                }
+            },
+            onDismissProgress: { offset in
+                dismissOffset = offset
+            },
+            onSingleTap: {
+                dismiss()
+            },
+            onInteractiveDismiss: {
+                NativeMediaGalleryFeedback(action: hapticFeedback)
+                    .verticalDismissDidCommit(true)
+                dismiss()
+            },
+            onRetry: {
+                Task { await imageStore.load(url) }
+            }
+        )
+        .task(id: url) {
+            await imageStore.load(url)
+        }
     }
 
     @ViewBuilder
@@ -163,73 +196,6 @@ struct NativeMediaGallery: View {
         return 1 - min(abs(dismissOffset) / fadeDistance, 1) * 0.55
     }
 
-    private func horizontalPagingGesture(pageWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .global)
-            .onChanged { value in
-                guard !isCurrentImageZoomed,
-                      abs(value.translation.width) > abs(value.translation.height),
-                      pageWidth > 0
-                else { return }
-                let pastFirst = selectedIndex == 0 && value.translation.width > 0
-                let pastLast = selectedIndex == urls.count - 1 && value.translation.width < 0
-                pageDragOffset = value.translation.width * (pastFirst || pastLast ? 0.25 : 1)
-            }
-            .onEnded { value in
-                guard !isCurrentImageZoomed,
-                      abs(value.translation.width) > abs(value.translation.height),
-                      pageWidth > 0
-                else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) { pageDragOffset = 0 }
-                    return
-                }
-                let target = NativeMediaPagingPolicy.targetIndex(
-                    currentIndex: selectedIndex,
-                    pageCount: urls.count,
-                    translationWidth: value.translation.width,
-                    predictedEndTranslationWidth: value.predictedEndTranslation.width,
-                    pageWidth: pageWidth
-                )
-                let previousIndex = selectedIndex
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                    selectedIndex = target
-                    pageDragOffset = 0
-                }
-                NativeMediaGalleryFeedback(action: hapticFeedback).pageDidCommit(
-                    from: previousIndex,
-                    to: target
-                )
-            }
-    }
-
-    private func verticalDismissGesture(viewportHeight: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .global)
-            .onChanged { value in
-                guard !isCurrentImageZoomed,
-                      NativeMediaDismissalPolicy.isVertical(value.translation)
-                else { return }
-                dismissOffset = value.translation.height
-            }
-            .onEnded { value in
-                guard !isCurrentImageZoomed,
-                      NativeMediaDismissalPolicy.isVertical(value.translation)
-                else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { dismissOffset = 0 }
-                    return
-                }
-                if NativeMediaDismissalPolicy.shouldDismiss(
-                    translation: value.translation,
-                    predictedEndTranslation: value.predictedEndTranslation,
-                    viewportHeight: viewportHeight
-                ) {
-                    NativeMediaGalleryFeedback(action: hapticFeedback)
-                        .verticalDismissDidCommit(true)
-                    dismiss()
-                } else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { dismissOffset = 0 }
-                }
-            }
-    }
-
     private func copyCurrentImage() {
         if let currentImage {
             UIPasteboard.general.image = currentImage
@@ -297,100 +263,445 @@ private struct NativeMediaIndicatorSurface: ViewModifier {
     }
 }
 
-private struct NativeZoomableRemoteImage: View {
+private struct NativeZoomableRemoteImage: UIViewControllerRepresentable {
     let url: URL
-    @ObservedObject var store: NativeMediaImageStore
+    let image: UIImage?
+    let didFail: Bool
+    let isCurrentPage: Bool
     let onZoomChanged: (Bool) -> Void
+    let onDismissProgress: (CGFloat) -> Void
+    let onSingleTap: () -> Void
+    let onInteractiveDismiss: () -> Void
+    let onRetry: () -> Void
 
-    @State private var scale: CGFloat = 1
-    @State private var settledScale: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @State private var settledOffset: CGSize = .zero
+    func makeUIViewController(context: Context) -> NativeZoomImageController {
+        NativeZoomImageController()
+    }
 
-    var body: some View {
-        Group {
-            if NativeRemoteMediaPolicy.isAnimatedImage(url) {
-                zoomableContent(
-                    NativeAnimatedRemoteImage(url: url, contentMode: .fit)
-                )
-            } else if let image = store.image(for: url) {
-                zoomableImage(image)
-            } else if store.didFail(url) {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text("图片加载失败")
-                    Button("重试") { Task { await store.load(url) } }
-                        .buttonStyle(.bordered)
-                }
-                .foregroundStyle(.white)
+    func updateUIViewController(_ controller: NativeZoomImageController, context: Context) {
+        controller.isCurrentPage = isCurrentPage
+        controller.updateContent(image: image, didFail: didFail)
+        controller.updateCallbacks(
+            onZoomChanged: onZoomChanged,
+            onDismissProgress: onDismissProgress,
+            onSingleTap: onSingleTap,
+            onInteractiveDismiss: onInteractiveDismiss,
+            onRetry: onRetry
+        )
+    }
+
+    static func dismantleUIViewController(
+        _ controller: NativeZoomImageController,
+        coordinator: ()
+    ) {
+        controller.prepareForRemoval()
+    }
+}
+
+private enum NativeMediaZoomPolicy {
+    static let minimumScale: CGFloat = 1
+    static let maximumScale: CGFloat = 4
+    static let doubleTapScale: CGFloat = 2
+    private static let minimumZoomDelta: CGFloat = 0.01
+
+    static func clampedScale(_ scale: CGFloat) -> CGFloat {
+        min(max(scale, minimumScale), maximumScale)
+    }
+
+    static func normalizedScale(_ scale: CGFloat) -> CGFloat {
+        let clamped = clampedScale(scale)
+        return clamped <= minimumScale + minimumZoomDelta ? minimumScale : clamped
+    }
+
+    static func isZoomed(_ scale: CGFloat) -> Bool {
+        normalizedScale(scale) > minimumScale
+    }
+
+    static func doubleTapTarget(currentScale: CGFloat) -> CGFloat {
+        isZoomed(currentScale) ? minimumScale : doubleTapScale
+    }
+}
+
+private enum NativeMediaDismissAxis {
+    case vertical
+}
+
+@MainActor
+private final class NativeZoomImageController: UIViewController,
+    UIScrollViewDelegate,
+    UIGestureRecognizerDelegate {
+    private let scrollView = UIScrollView()
+    private let zoomContentView = UIView()
+    private let imageView = UIImageView()
+    private let activityIndicator = UIActivityIndicatorView(style: .large)
+    private let retryButton = UIButton(type: .system)
+    private lazy var dismissPanGestureRecognizer = UIPanGestureRecognizer(
+        target: self,
+        action: #selector(handleDismissPan(_:))
+    )
+
+    private var image: UIImage?
+    private var didFail = false
+    private var lastReportedZoomed = false
+    private var activeDismissAxis: NativeMediaDismissAxis?
+    private var isCompletingDismissGesture = false
+
+    var isCurrentPage = true
+    var onZoomChanged: ((Bool) -> Void)?
+    var onDismissProgress: ((CGFloat) -> Void)?
+    var onSingleTap: (() -> Void)?
+    var onInteractiveDismiss: (() -> Void)?
+    var onRetry: (() -> Void)?
+
+    override func loadView() {
+        let rootView = UIView()
+        rootView.backgroundColor = .black
+        view = rootView
+
+        scrollView.backgroundColor = .black
+        scrollView.delegate = self
+        scrollView.minimumZoomScale = NativeMediaZoomPolicy.minimumScale
+        scrollView.maximumZoomScale = NativeMediaZoomPolicy.maximumScale
+        scrollView.bounces = true
+        scrollView.bouncesZoom = true
+        scrollView.alwaysBounceHorizontal = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.decelerationRate = .fast
+        scrollView.delaysContentTouches = false
+        // At rest the parent TabView owns horizontal paging. The scroll view's
+        // pan recognizer is enabled only while the image is actually zoomed.
+        scrollView.panGestureRecognizer.isEnabled = false
+        scrollView.pinchGestureRecognizer?.delaysTouchesBegan = false
+        scrollView.pinchGestureRecognizer?.delaysTouchesEnded = false
+        scrollView.isAccessibilityElement = true
+        scrollView.accessibilityLabel = "全屏图片"
+        scrollView.accessibilityTraits = [.image]
+        view.addSubview(scrollView)
+
+        zoomContentView.backgroundColor = .black
+        zoomContentView.clipsToBounds = true
+        scrollView.addSubview(zoomContentView)
+
+        imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = .clear
+        zoomContentView.addSubview(imageView)
+
+        let doubleTapRecognizer = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleDoubleTap(_:))
+        )
+        doubleTapRecognizer.numberOfTapsRequired = 2
+        doubleTapRecognizer.cancelsTouchesInView = false
+        let singleTapRecognizer = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleSingleTap(_:))
+        )
+        singleTapRecognizer.numberOfTapsRequired = 1
+        singleTapRecognizer.cancelsTouchesInView = false
+        singleTapRecognizer.require(toFail: doubleTapRecognizer)
+        view.addGestureRecognizer(doubleTapRecognizer)
+        view.addGestureRecognizer(singleTapRecognizer)
+
+        dismissPanGestureRecognizer.maximumNumberOfTouches = 1
+        dismissPanGestureRecognizer.cancelsTouchesInView = false
+        dismissPanGestureRecognizer.delegate = self
+        view.addGestureRecognizer(dismissPanGestureRecognizer)
+
+        activityIndicator.color = .white
+        activityIndicator.hidesWhenStopped = true
+        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(activityIndicator)
+
+        var retryConfiguration = UIButton.Configuration.gray()
+        retryConfiguration.title = "图片加载失败，点按重试"
+        retryConfiguration.image = UIImage(systemName: "arrow.clockwise")
+        retryConfiguration.imagePadding = 8
+        retryButton.configuration = retryConfiguration
+        retryButton.tintColor = .white
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.addTarget(self, action: #selector(retry), for: .touchUpInside)
+        view.addSubview(retryButton)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            activityIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            retryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            retryButton.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        ])
+
+        updateContentVisibility()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let viewportSize = scrollView.bounds.size
+        if viewportSize != .zero,
+           viewportSize != zoomContentView.bounds.size,
+           NativeMediaZoomPolicy.isZoomed(scrollView.zoomScale) {
+            resetZoom(animated: false)
+        }
+        if viewportSize != .zero,
+           NativeMediaZoomPolicy.isZoomed(scrollView.zoomScale) == false {
+            zoomContentView.bounds = CGRect(origin: .zero, size: viewportSize)
+            zoomContentView.center = CGPoint(
+                x: scrollView.bounds.midX,
+                y: scrollView.bounds.midY
+            )
+            scrollView.contentSize = viewportSize
+        }
+        imageView.frame = zoomContentView.bounds
+        centerZoomedContent()
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        zoomContentView
+    }
+
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        scrollView.panGestureRecognizer.isEnabled = true
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        updateZoomState()
+    }
+
+    func scrollViewDidEndZooming(
+        _ scrollView: UIScrollView,
+        with view: UIView?,
+        atScale scale: CGFloat
+    ) {
+        let normalizedScale = NativeMediaZoomPolicy.normalizedScale(scale)
+        if normalizedScale != scale {
+            scrollView.setZoomScale(normalizedScale, animated: false)
+        }
+        updateZoomState()
+        if NativeMediaZoomPolicy.isZoomed(normalizedScale) == false {
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      NativeMediaZoomPolicy.isZoomed(self.scrollView.zoomScale) == false
+                else { return }
+                self.scrollView.panGestureRecognizer.isEnabled = false
+            }
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === dismissPanGestureRecognizer,
+              isCurrentPage,
+              isCompletingDismissGesture == false,
+              NativeMediaZoomPolicy.isZoomed(scrollView.zoomScale) == false,
+              NativeMediaDismissalPolicy.isVerticalVelocity(
+                  dismissPanGestureRecognizer.velocity(in: view)
+              )
+        else { return false }
+        activeDismissAxis = .vertical
+        return true
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard gestureRecognizer === dismissPanGestureRecognizer,
+              let otherPan = otherGestureRecognizer as? UIPanGestureRecognizer,
+              otherPan !== scrollView.panGestureRecognizer,
+              let ancestorView = otherPan.view
+        else { return false }
+        return view.isDescendant(of: ancestorView)
+    }
+
+    func updateContent(image: UIImage?, didFail: Bool) {
+        let imageChanged = self.image !== image
+        self.image = image
+        self.didFail = didFail
+
+        if imageChanged {
+            imageView.stopAnimating()
+            imageView.image = image
+            if let image, (image.images?.count ?? 1) > 1 {
+                imageView.startAnimating()
+            }
+            if image != nil {
+                resetZoom(animated: false)
+            }
+        }
+        updateContentVisibility()
+    }
+
+    func updateCallbacks(
+        onZoomChanged: @escaping (Bool) -> Void,
+        onDismissProgress: @escaping (CGFloat) -> Void,
+        onSingleTap: @escaping () -> Void,
+        onInteractiveDismiss: @escaping () -> Void,
+        onRetry: @escaping () -> Void
+    ) {
+        self.onZoomChanged = onZoomChanged
+        self.onDismissProgress = onDismissProgress
+        self.onSingleTap = onSingleTap
+        self.onInteractiveDismiss = onInteractiveDismiss
+        self.onRetry = onRetry
+    }
+
+    func prepareForRemoval() {
+        imageView.stopAnimating()
+        onZoomChanged = nil
+        onDismissProgress = nil
+        onSingleTap = nil
+        onInteractiveDismiss = nil
+        onRetry = nil
+    }
+
+    private func updateContentVisibility() {
+        let showsRetry = image == nil && didFail
+        let showsActivity = image == nil && didFail == false
+        retryButton.isHidden = showsRetry == false
+        if showsActivity {
+            activityIndicator.startAnimating()
+        } else {
+            activityIndicator.stopAnimating()
+        }
+    }
+
+    @objc private func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended,
+              isCompletingDismissGesture == false
+        else { return }
+        onSingleTap?()
+    }
+
+    @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        let targetScale = NativeMediaZoomPolicy.doubleTapTarget(
+            currentScale: scrollView.zoomScale
+        )
+        if targetScale == NativeMediaZoomPolicy.minimumScale {
+            scrollView.setZoomScale(targetScale, animated: true)
+        } else {
+            scrollView.panGestureRecognizer.isEnabled = true
+            let location = recognizer.location(in: zoomContentView)
+            zoom(
+                to: targetScale,
+                centeredAt: zoomContentView.bounds.contains(location)
+                    ? location
+                    : zoomContentView.center
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.updateZoomState()
+        }
+    }
+
+    @objc private func retry() {
+        onRetry?()
+    }
+
+    @objc private func handleDismissPan(_ recognizer: UIPanGestureRecognizer) {
+        guard activeDismissAxis != nil else { return }
+        let translation = recognizer.translation(in: view)
+        switch recognizer.state {
+        case .changed:
+            scrollView.transform = CGAffineTransform(
+                translationX: 0,
+                y: translation.y
+            )
+            onDismissProgress?(translation.y)
+        case .ended:
+            if NativeMediaDismissalPolicy.shouldDismiss(
+                translation: translation,
+                velocity: recognizer.velocity(in: view),
+                viewportHeight: view.bounds.height
+            ) {
+                isCompletingDismissGesture = true
+                onInteractiveDismiss?()
             } else {
-                ProgressView().tint(.white)
+                restoreAfterCancelledDismissal()
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
-        .task(id: url) { await store.load(url) }
-        .onDisappear { onZoomChanged(false) }
-    }
-
-    private func zoomableImage(_ image: UIImage) -> some View {
-        zoomableContent(Image(uiImage: image).resizable().scaledToFit())
-    }
-
-    @ViewBuilder
-    private func zoomableContent<Content: View>(_ content: Content) -> some View {
-        let transformed = content
-            .scaleEffect(scale)
-            .offset(offset)
-            .gesture(magnificationGesture)
-            .onTapGesture(count: 2, perform: toggleZoom)
-
-        if scale > 1.001 {
-            transformed.simultaneousGesture(panGesture)
-        } else {
-            transformed
+            activeDismissAxis = nil
+        case .cancelled, .failed:
+            restoreAfterCancelledDismissal()
+            activeDismissAxis = nil
+        default:
+            break
         }
     }
 
-    private var magnificationGesture: some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                scale = min(max(settledScale * value, 1), 5)
-                onZoomChanged(scale > 1.001)
-            }
-            .onEnded { _ in
-                settledScale = scale
-                if scale == 1 {
-                    offset = .zero
-                    settledOffset = .zero
-                }
-                onZoomChanged(scale > 1.001)
-            }
-    }
-
-    private var panGesture: some Gesture {
-        DragGesture()
-            .onChanged { value in
-                guard scale > 1 else { return }
-                offset = CGSize(
-                    width: settledOffset.width + value.translation.width,
-                    height: settledOffset.height + value.translation.height
-                )
-            }
-            .onEnded { _ in settledOffset = offset }
-    }
-
-    private func toggleZoom() {
-        if scale > 1 {
-            scale = 1
-            settledScale = 1
-            offset = .zero
-            settledOffset = .zero
-        } else {
-            scale = 2
-            settledScale = 2
+    private func restoreAfterCancelledDismissal() {
+        isCompletingDismissGesture = true
+        if UIAccessibility.isReduceMotionEnabled {
+            scrollView.transform = .identity
+            onDismissProgress?(0)
+            isCompletingDismissGesture = false
+            return
         }
-        onZoomChanged(scale > 1.001)
+        UIView.animate(
+            withDuration: 0.28,
+            delay: 0,
+            usingSpringWithDamping: 0.84,
+            initialSpringVelocity: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction],
+            animations: { [weak self] in
+                self?.scrollView.transform = .identity
+            }
+        ) { [weak self] _ in
+            self?.onDismissProgress?(0)
+            self?.isCompletingDismissGesture = false
+        }
+    }
+
+    private func zoom(to scale: CGFloat, centeredAt location: CGPoint) {
+        let targetScale = NativeMediaZoomPolicy.clampedScale(scale)
+        let viewportSize = scrollView.bounds.size
+        guard viewportSize.width > 0, viewportSize.height > 0 else {
+            scrollView.setZoomScale(targetScale, animated: true)
+            return
+        }
+        let zoomSize = CGSize(
+            width: viewportSize.width / targetScale,
+            height: viewportSize.height / targetScale
+        )
+        scrollView.zoom(
+            to: CGRect(
+                x: location.x - zoomSize.width / 2,
+                y: location.y - zoomSize.height / 2,
+                width: zoomSize.width,
+                height: zoomSize.height
+            ),
+            animated: true
+        )
+    }
+
+    private func updateZoomState() {
+        let isZoomed = NativeMediaZoomPolicy.isZoomed(scrollView.zoomScale)
+        if isZoomed != lastReportedZoomed {
+            lastReportedZoomed = isZoomed
+            onZoomChanged?(isZoomed)
+        }
+        centerZoomedContent()
+    }
+
+    private func resetZoom(animated: Bool) {
+        scrollView.setZoomScale(NativeMediaZoomPolicy.minimumScale, animated: animated)
+        scrollView.panGestureRecognizer.isEnabled = false
+        scrollView.transform = .identity
+        centerZoomedContent()
+        updateZoomState()
+    }
+
+    private func centerZoomedContent() {
+        let contentSize = scrollView.contentSize
+        zoomContentView.center = CGPoint(
+            x: max(contentSize.width, scrollView.bounds.width) / 2,
+            y: max(contentSize.height, scrollView.bounds.height) / 2
+        )
     }
 }
 
@@ -513,10 +824,10 @@ enum NativeAnimatedImageDecoder {
         var duration = 0.0
 
         for index in 0 ..< frameCount {
-            duration += frameDuration(source: source, index: index)
             guard index % stride == 0,
                   let cgImage = CGImageSourceCreateThumbnailAtIndex(source, index, options)
             else { continue }
+            duration += frameDuration(source: source, index: index)
             frames.append(UIImage(cgImage: cgImage))
         }
 
@@ -556,6 +867,10 @@ struct NativeMediaDismissalPolicy {
         abs(translation.height) > abs(translation.width) * 1.15
     }
 
+    static func isVerticalVelocity(_ velocity: CGPoint) -> Bool {
+        abs(velocity.y) > abs(velocity.x) * 1.15
+    }
+
     static func shouldDismiss(
         translation: CGSize,
         predictedEndTranslation: CGSize,
@@ -565,6 +880,16 @@ struct NativeMediaDismissalPolicy {
         let threshold = max(viewportHeight * 0.16, 72)
         return abs(translation.height) >= threshold ||
             abs(predictedEndTranslation.height) >= threshold * 1.35
+    }
+
+    static func shouldDismiss(
+        translation: CGPoint,
+        velocity: CGPoint,
+        viewportHeight: CGFloat
+    ) -> Bool {
+        let threshold = max(viewportHeight * 0.16, 72)
+        return abs(translation.y) >= threshold ||
+            (abs(translation.y) >= 60 && abs(velocity.y) >= 1_000)
     }
 }
 
@@ -624,7 +949,11 @@ private final class NativeMediaImageStore: ObservableObject {
         }
         do {
             let data = try await operation.task.value
-            guard let image = UIImage(data: data) else { throw URLError(.cannotDecodeContentData) }
+            // The decoder inspects frame count itself, so animated media works
+            // even when Zhihu serves it from an extensionless or renamed URL.
+            guard let image = NativeAnimatedImageDecoder.decode(data) else {
+                throw URLError(.cannotDecodeContentData)
+            }
             images[url] = image
             failedURLs.remove(url)
         } catch is CancellationError {

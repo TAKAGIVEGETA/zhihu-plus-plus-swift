@@ -1,4 +1,6 @@
 import CoreGraphics
+import ImageIO
+import UIKit
 import XCTest
 @testable import iosApp
 
@@ -56,6 +58,61 @@ final class NativeMediaGalleryTests: XCTestCase {
                 viewportHeight: 800
             )
         )
+    }
+
+    func testVerticalDismissalUsesPanVelocityDirectionAndCommitPolicy() {
+        XCTAssertTrue(NativeMediaDismissalPolicy.isVerticalVelocity(
+            CGPoint(x: 20, y: 300)
+        ))
+        XCTAssertFalse(NativeMediaDismissalPolicy.isVerticalVelocity(
+            CGPoint(x: 300, y: 20)
+        ))
+        XCTAssertTrue(NativeMediaDismissalPolicy.shouldDismiss(
+            translation: CGPoint(x: 4, y: -60),
+            velocity: CGPoint(x: 0, y: -1_200),
+            viewportHeight: 800
+        ))
+        XCTAssertFalse(NativeMediaDismissalPolicy.shouldDismiss(
+            translation: CGPoint(x: 4, y: -50),
+            velocity: CGPoint(x: 0, y: -900),
+            viewportHeight: 800
+        ))
+    }
+
+    func testAnimatedImageDecoderPreservesGIFFramesAndDuration() throws {
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(
+            data,
+            "com.compuserve.gif" as CFString,
+            2,
+            nil
+        ))
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        let frame = try XCTUnwrap(context.makeImage())
+        let properties = [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFDelayTime: 0.08
+            ]
+        ] as CFDictionary
+
+        CGImageDestinationAddImage(destination, frame, properties)
+        CGImageDestinationAddImage(destination, frame, properties)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+        let image = try XCTUnwrap(NativeAnimatedImageDecoder.decode(data as Data))
+        XCTAssertEqual(image.images?.count, 2)
+        XCTAssertEqual(image.duration, 0.16, accuracy: 0.001)
     }
 
     func testPagingUsesViewportWidthAndStopsAtBothBoundaries() {
