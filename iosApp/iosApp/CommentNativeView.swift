@@ -158,7 +158,10 @@ private struct CommentReplySheetView: View {
     let close: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.nativeHapticFeedback) private var hapticFeedback
-    @State private var isDismissInputReady = false
+    @State private var isBlockingDismissal = true
+    @State private var isOpeningTouchActive = false
+
+    private static let openingDismissGrace: TimeInterval = 0.15
 
     var body: some View {
         GeometryReader { geometry in
@@ -169,16 +172,18 @@ private struct CommentReplySheetView: View {
                     }
             }
             .contentShape(Rectangle())
-            .simultaneousGesture(dismissGesture(containerSize: geometry.size))
+            .simultaneousGesture(openingTouchGate)
+            .simultaneousGesture(dismissGesture(containerWidth: geometry.size.width))
         }
-        .allowsHitTesting(isDismissInputReady)
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .modifier(CommentSheetPresentationModifier())
-        .interactiveDismissDisabled(true)
+        .interactiveDismissDisabled(isBlockingDismissal || isOpeningTouchActive)
         .accessibilityIdentifier("comment_reply_sheet")
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                isDismissInputReady = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.openingDismissGrace) {
+                if isOpeningTouchActive == false {
+                    isBlockingDismissal = false
+                }
             }
         }
     }
@@ -194,15 +199,32 @@ private struct CommentReplySheetView: View {
         )
     }
 
-    private func dismissGesture(containerSize: CGSize) -> some Gesture {
+    private var openingTouchGate: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                if isBlockingDismissal {
+                    isOpeningTouchActive = true
+                }
+            }
+            .onEnded { _ in
+                guard isOpeningTouchActive else { return }
+                isOpeningTouchActive = false
+                DispatchQueue.main.async {
+                    isBlockingDismissal = false
+                }
+            }
+    }
+
+    private func dismissGesture(containerWidth: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: CommentReplySheetSwipePolicy.minimumDistance)
             .onEnded { value in
-                guard isDismissInputReady,
+                guard isBlockingDismissal == false,
+                      isOpeningTouchActive == false,
                       CommentReplySheetSwipePolicy.shouldDismiss(
                         startLocation: value.startLocation,
                         translation: value.translation,
                         predictedEndTranslation: value.predictedEndTranslation,
-                        containerSize: containerSize
+                        containerWidth: containerWidth
                 ) else { return }
                 CommentReplySheetFeedback(action: hapticFeedback).edgeDismissDidCommit(true)
                 var transaction = Transaction()
@@ -226,43 +248,23 @@ struct CommentReplySheetSwipePolicy {
     static let minimumDistance: CGFloat = 14
     static let leadingEdgeWidth: CGFloat = 44
     static let horizontalIntentRatio: CGFloat = 1.25
-    static let verticalIntentRatio: CGFloat = 1.25
     static let minimumCommitDistance: CGFloat = 72
     static let commitWidthRatio: CGFloat = 0.22
-    static let topDismissBandHeight: CGFloat = 120
-    static let minimumVerticalCommitDistance: CGFloat = 72
-    static let commitHeightRatio: CGFloat = 0.12
 
     static func shouldDismiss(
         startLocation: CGPoint,
         translation: CGSize,
         predictedEndTranslation: CGSize,
-        containerSize: CGSize
+        containerWidth: CGFloat
     ) -> Bool {
-        guard containerSize.width > 0,
-              containerSize.height > 0
+        guard containerWidth > 0,
+              startLocation.x <= leadingEdgeWidth,
+              translation.width > 0,
+              translation.width > abs(translation.height) * horizontalIntentRatio
         else { return false }
 
-        if startLocation.x <= leadingEdgeWidth,
-           translation.width > abs(translation.height) * horizontalIntentRatio {
-            let widthThreshold = max(
-                minimumCommitDistance,
-                containerSize.width * commitWidthRatio
-            )
-            return translation.width >= widthThreshold ||
-                predictedEndTranslation.width >= widthThreshold
-        }
-
-        guard startLocation.y <= topDismissBandHeight,
-              translation.height > abs(translation.width) * verticalIntentRatio
-        else { return false }
-
-        let heightThreshold = max(
-            minimumVerticalCommitDistance,
-            containerSize.height * commitHeightRatio
-        )
-        return translation.height >= heightThreshold ||
-            predictedEndTranslation.height >= heightThreshold
+        let threshold = max(minimumCommitDistance, containerWidth * commitWidthRatio)
+        return translation.width >= threshold || predictedEndTranslation.width >= threshold
     }
 }
 
