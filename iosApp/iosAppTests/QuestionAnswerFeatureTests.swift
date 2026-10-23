@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import UIKit
 import XCTest
@@ -7,6 +8,12 @@ final class QuestionAnswerFeatureTests: XCTestCase {
     override func tearDown() {
         QAURLProtocol.setHandler(nil)
         super.tearDown()
+    }
+
+    func testVideoPlaybackUsesMediaAudioSession() {
+        NativeVideoAudioSession.configure()
+
+        XCTAssertEqual(AVAudioSession.sharedInstance().category, .playback)
     }
 
     func testReadingPreferencesIgnoreLegacyAnswerSwitchMode() throws {

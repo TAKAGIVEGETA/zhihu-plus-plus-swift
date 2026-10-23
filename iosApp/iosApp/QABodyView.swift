@@ -1,3 +1,4 @@
+import AVFoundation
 import AVKit
 import SwiftUI
 import UIKit
@@ -571,7 +572,7 @@ private struct QANativeVideoPlayer: View {
         ZStack {
             Color.black
             if let player {
-                VideoPlayer(player: player)
+                NativeVideoPlayerController(player: player)
             } else if let thumbnailURL = video.thumbnailURL {
                 AsyncImage(url: thumbnailURL) { image in
                     image.resizable().scaledToFit()
@@ -586,10 +587,87 @@ private struct QANativeVideoPlayer: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .onAppear {
             guard player == nil, let playbackURL = video.playbackURL else { return }
+            NativeVideoAudioSession.configure()
             player = AVPlayer(url: playbackURL)
         }
         .onDisappear { player?.pause() }
         .accessibilityLabel("视频播放器")
+    }
+}
+
+enum NativeVideoAudioSession {
+    static func configure() {
+        try? AVAudioSession.sharedInstance().setCategory(
+            .playback,
+            mode: .moviePlayback,
+            options: []
+        )
+    }
+
+    static func activate() {
+        configure()
+        try? AVAudioSession.sharedInstance().setActive(true)
+    }
+}
+
+private struct NativeVideoPlayerController: UIViewControllerRepresentable {
+    let player: AVPlayer
+    let isFullScreenPresentation: Bool
+
+    init(player: AVPlayer, isFullScreenPresentation: Bool = false) {
+        self.player = player
+        self.isFullScreenPresentation = isFullScreenPresentation
+    }
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        updateUIViewController(controller, context: context)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        controller.player = player
+        controller.showsPlaybackControls = true
+        controller.videoGravity = .resizeAspect
+        controller.entersFullScreenWhenPlaybackBegins = !isFullScreenPresentation
+        controller.exitsFullScreenWhenPlaybackEnds = !isFullScreenPresentation
+    }
+}
+
+private struct NativeVideoFullScreenPlayer: View {
+    let player: AVPlayer
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            NativeVideoPlayerController(
+                player: player,
+                isFullScreenPresentation: true
+            )
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.black.opacity(0.5), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("退出全屏")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+        }
+        .onAppear {
+            NativeVideoAudioSession.activate()
+        }
     }
 }
 
@@ -648,13 +726,14 @@ struct NativeVideoPlayerScreen: View {
     @State private var player: AVPlayer?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var isFullScreenPresented = false
 
     var body: some View {
         VStack(spacing: 18) {
             ZStack {
                 Color.black
                 if let player {
-                    VideoPlayer(player: player)
+                    NativeVideoPlayerController(player: player)
                 } else if let thumbnailURL = route.thumbnailURL {
                     AsyncImage(url: thumbnailURL) { phase in
                         switch phase {
@@ -677,6 +756,22 @@ struct NativeVideoPlayerScreen: View {
             }
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(alignment: .topTrailing) {
+                if player != nil, errorMessage == nil {
+                    Button {
+                        isFullScreenPresented = true
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.black.opacity(0.45), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(8)
+                    .accessibilityLabel("进入全屏")
+                }
+            }
 
             if let errorMessage {
                 VStack(spacing: 12) {
@@ -706,6 +801,11 @@ struct NativeVideoPlayerScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: route) { await load() }
         .onDisappear { player?.pause() }
+        .fullScreenCover(isPresented: $isFullScreenPresented) {
+            if let player {
+                NativeVideoFullScreenPlayer(player: player)
+            }
+        }
     }
 
     @MainActor
@@ -720,6 +820,7 @@ struct NativeVideoPlayerScreen: View {
             let player = AVPlayer(url: playbackURL)
             self.player = player
             isLoading = false
+            NativeVideoAudioSession.activate()
             player.play()
         } catch {
             guard !error.isNativeRequestCancellation else { return }
