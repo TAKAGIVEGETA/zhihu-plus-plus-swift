@@ -592,7 +592,11 @@ private struct CommentRow: View {
                                 Group {
                                     if media.kind == .animatedImage ||
                                         NativeRemoteMediaPolicy.isAnimatedImage(media.url) {
-                                        NativeAnimatedRemoteImage(url: media.url, contentMode: .fill)
+                                        NativeAnimatedRemoteImage(
+                                            url: media.url,
+                                            contentMode: .fill,
+                                            maximumPixelSize: 320
+                                        )
                                     } else {
                                         AsyncImage(url: media.url) { phase in
                                             if case let .success(image) = phase {

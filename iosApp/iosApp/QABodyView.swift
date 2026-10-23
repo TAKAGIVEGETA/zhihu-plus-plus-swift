@@ -513,7 +513,10 @@ private struct QABodyRemoteImage: View {
     @ViewBuilder
     private var content: some View {
         if NativeRemoteMediaPolicy.isAnimatedImage(image.url) {
-            NativeAnimatedRemoteImage(url: image.url)
+            NativeAnimatedRemoteImage(
+                url: image.url,
+                maximumPixelSize: 1_000
+            )
         } else {
             AsyncImage(url: image.url) { phase in
                 switch phase {

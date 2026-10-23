@@ -748,12 +748,18 @@ enum NativeRemoteMediaPolicy {
 struct NativeAnimatedRemoteImage: View {
     let url: URL
     let contentMode: ContentMode
+    let maximumPixelSize: Int
 
     @StateObject private var loader = NativeAnimatedImageLoader()
 
-    init(url: URL, contentMode: ContentMode = .fit) {
+    init(
+        url: URL,
+        contentMode: ContentMode = .fit,
+        maximumPixelSize: Int = NativeAnimatedImageDecoder.defaultMaximumPixelSize
+    ) {
         self.url = url
         self.contentMode = contentMode
+        self.maximumPixelSize = maximumPixelSize
     }
 
     var body: some View {
@@ -778,7 +784,9 @@ struct NativeAnimatedRemoteImage: View {
             }
         }
         .contentShape(Rectangle())
-        .task(id: url) { await loader.load(url) }
+        .task(id: url) {
+            await loader.load(url, maximumPixelSize: maximumPixelSize)
+        }
         .accessibilityLabel("动图")
     }
 }
@@ -866,21 +874,16 @@ private final class NativeAnimatedImageLoader: ObservableObject {
     @Published private(set) var didFail = false
     private var loadedURL: URL?
 
-    func load(_ url: URL) async {
+    func load(_ url: URL, maximumPixelSize: Int) async {
         guard loadedURL != url || image == nil else { return }
         loadedURL = url
         image = nil
         didFail = false
         do {
-            let (data, response) = try await URLSession.shared.data(
-                for: NativeMediaImageRequestFactory.make(for: url)
+            let decoded = try await NativeRemoteImageStore.shared.load(
+                url,
+                maximumPixelSize: maximumPixelSize
             )
-            try Task.checkCancellation()
-            guard let response = response as? HTTPURLResponse,
-                  (200..<300).contains(response.statusCode),
-                  data.count <= 40 * 1_024 * 1_024,
-                  let decoded = NativeAnimatedImageDecoder.decode(data)
-            else { throw URLError(.cannotDecodeContentData) }
             guard loadedURL == url else { return }
             image = decoded
         } catch is CancellationError {
@@ -891,12 +894,32 @@ private final class NativeAnimatedImageLoader: ObservableObject {
     }
 }
 
+struct NativeAnimatedImageBox: @unchecked Sendable {
+    let image: UIImage
+}
+
+actor NativeAnimatedImageDecoderService {
+    static let shared = NativeAnimatedImageDecoderService()
+
+    func decode(
+        _ data: Data,
+        maximumPixelSize: Int = NativeAnimatedImageDecoder.defaultMaximumPixelSize
+    ) -> NativeAnimatedImageBox? {
+        NativeAnimatedImageDecoder
+            .decode(data, maximumPixelSize: maximumPixelSize)
+            .map(NativeAnimatedImageBox.init)
+    }
+}
+
 enum NativeAnimatedImageDecoder {
+    static let defaultMaximumPixelSize = 1_600
     private static let maximumFrameCount = 60
     private static let maximumTotalPixels = 24_000_000
-    private static let maximumPixelSize = 1_600
 
-    static func decode(_ data: Data) -> UIImage? {
+    static func decode(
+        _ data: Data,
+        maximumPixelSize: Int = defaultMaximumPixelSize
+    ) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let frameCount = CGImageSourceGetCount(source)
         guard frameCount > 1 else { return UIImage(data: data) }
@@ -906,7 +929,10 @@ enum NativeAnimatedImageDecoder {
         let memoryBoundPixelSize = Int(
             sqrt(Double(maximumTotalPixels) / Double(max(decodedFrameCount, 1)))
         )
-        let thumbnailPixelSize = min(maximumPixelSize, max(memoryBoundPixelSize, 320))
+        let thumbnailPixelSize = min(
+            maximumPixelSize,
+            max(memoryBoundPixelSize, min(320, maximumPixelSize))
+        )
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -963,6 +989,92 @@ enum NativeAnimatedImageDecoder {
         let clamped = (clamped as? NSNumber)?.doubleValue
         let value = unclamped ?? clamped ?? 0.1
         return value < 0.02 ? 0.1 : value
+    }
+}
+
+@MainActor
+final class NativeRemoteImageStore {
+    static let shared = NativeRemoteImageStore()
+
+    private struct LoadOperation {
+        let id = UUID()
+        let task: Task<UIImage, Error>
+    }
+
+    private let cache = NSCache<NSString, UIImage>()
+    private var inFlight: [NSString: LoadOperation] = [:]
+
+    private init() {
+        cache.countLimit = 24
+        cache.totalCostLimit = 96 * 1_024 * 1_024
+    }
+
+    func cachedImage(
+        for url: URL,
+        maximumPixelSize: Int = NativeAnimatedImageDecoder.defaultMaximumPixelSize
+    ) -> UIImage? {
+        cache.object(forKey: cacheKey(url: url, maximumPixelSize: maximumPixelSize))
+    }
+
+    func load(
+        _ url: URL,
+        maximumPixelSize: Int = NativeAnimatedImageDecoder.defaultMaximumPixelSize
+    ) async throws -> UIImage {
+        let key = cacheKey(url: url, maximumPixelSize: maximumPixelSize)
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+
+        let operation: LoadOperation
+        if let existing = inFlight[key] {
+            operation = existing
+        } else {
+            let task = Task {
+                let (data, response) = try await URLSession.shared.data(
+                    for: NativeMediaImageRequestFactory.make(for: url)
+                )
+                guard let response = response as? HTTPURLResponse,
+                      (200..<300).contains(response.statusCode),
+                      data.count <= 40 * 1_024 * 1_024
+                else { throw URLError(.badServerResponse) }
+
+                guard let box = await NativeAnimatedImageDecoderService.shared.decode(
+                    data,
+                    maximumPixelSize: maximumPixelSize
+                )
+                else { throw URLError(.cannotDecodeContentData) }
+                return box.image
+            }
+            operation = LoadOperation(task: task)
+            inFlight[key] = operation
+        }
+
+        defer {
+            if inFlight[key]?.id == operation.id {
+                inFlight.removeValue(forKey: key)
+            }
+        }
+        do {
+            let image = try await operation.task.value
+            cache.setObject(
+                image,
+                forKey: key,
+                cost: memoryCost(of: image)
+            )
+            return image
+        } catch {
+            throw error
+        }
+    }
+
+    private func cacheKey(url: URL, maximumPixelSize: Int) -> NSString {
+        NSString(string: "\(maximumPixelSize)|\(url.absoluteString)")
+    }
+
+    private func memoryCost(of image: UIImage) -> Int {
+        let frames = image.images ?? [image]
+        let pixels = max(1, Int(image.size.width * image.size.height * image.scale * image.scale))
+        return max(1, pixels * frames.count * 4)
     }
 }
 
@@ -1038,43 +1150,17 @@ struct NativeMediaPagingPolicy {
 
 @MainActor
 private final class NativeMediaImageStore: ObservableObject {
-    private struct LoadOperation {
-        let id = UUID()
-        let task: Task<Data, Error>
-    }
-
     @Published private var images: [URL: UIImage] = [:]
     @Published private var failedURLs: Set<URL> = []
-    private var operations: [URL: LoadOperation] = [:]
 
     func image(for url: URL) -> UIImage? { images[url] }
     func didFail(_ url: URL) -> Bool { failedURLs.contains(url) }
 
     func load(_ url: URL) async {
         guard images[url] == nil else { return }
-        let operation: LoadOperation
-        if let existing = operations[url] {
-            operation = existing
-        } else {
-            failedURLs.remove(url)
-            operation = LoadOperation(task: Task {
-                let (data, response) = try await URLSession.shared.data(
-                    for: NativeMediaImageRequestFactory.make(for: url)
-                )
-                guard let response = response as? HTTPURLResponse,
-                      (200..<300).contains(response.statusCode)
-                else { throw URLError(.badServerResponse) }
-                return data
-            })
-            operations[url] = operation
-        }
+        failedURLs.remove(url)
         do {
-            let data = try await operation.task.value
-            // The decoder inspects frame count itself, so animated media works
-            // even when Zhihu serves it from an extensionless or renamed URL.
-            guard let image = NativeAnimatedImageDecoder.decode(data) else {
-                throw URLError(.cannotDecodeContentData)
-            }
+            let image = try await NativeRemoteImageStore.shared.load(url)
             images[url] = image
             failedURLs.remove(url)
         } catch is CancellationError {
@@ -1082,7 +1168,6 @@ private final class NativeMediaImageStore: ObservableObject {
         } catch {
             failedURLs.insert(url)
         }
-        if operations[url]?.id == operation.id { operations.removeValue(forKey: url) }
     }
 }
 

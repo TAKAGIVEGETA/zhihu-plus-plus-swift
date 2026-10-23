@@ -150,6 +150,41 @@ final class NativeMediaGalleryTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testAnimatedImageDecoderServiceDownsamplesLargePreviewFrames() async throws {
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(
+            data,
+            "com.compuserve.gif" as CFString,
+            2,
+            nil
+        ))
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: 500,
+            height: 400,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(red: 0, green: 1, blue: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 500, height: 400))
+        let frame = try XCTUnwrap(context.makeImage())
+
+        CGImageDestinationAddImage(destination, frame, nil)
+        CGImageDestinationAddImage(destination, frame, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+        let box = try XCTUnwrap(await NativeAnimatedImageDecoderService.shared.decode(
+            data as Data,
+            maximumPixelSize: 200
+        ))
+        XCTAssertNotNil(box.image.images)
+        XCTAssertLessThanOrEqual(max(box.image.size.width, box.image.size.height), 200)
+    }
+
     func testImageRequestsUseZhihuBrowserUserAgent() throws {
         let url = try XCTUnwrap(URL(string: "https://pic.zhimg.com/demo.gif"))
         let request = NativeMediaImageRequestFactory.make(for: url)
