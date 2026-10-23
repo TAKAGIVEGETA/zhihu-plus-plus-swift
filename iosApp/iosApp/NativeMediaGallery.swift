@@ -1,6 +1,7 @@
 import ImageIO
 import Photos
 import SwiftUI
+import UniformTypeIdentifiers
 import UIKit
 
 struct NativeMediaGallery: View {
@@ -214,12 +215,13 @@ struct NativeMediaGallery: View {
     }
 
     private func saveCurrentImage() {
-        guard let currentImage, !isSaving else { return }
+        guard let currentURL, currentImage != nil, !isSaving else { return }
         isSaving = true
         Task {
             defer { isSaving = false }
             do {
-                try await NativePhotoLibrary.save(currentImage)
+                let data = try await NativeRemoteImageStore.shared.originalData(for: currentURL)
+                try await NativePhotoLibrary.save(data, sourceURL: currentURL)
                 message = NativeMediaMessage(text: "已保存到照片")
             } catch {
                 message = NativeMediaMessage(text: "无法保存图片，请检查照片权限后重试")
@@ -1012,12 +1014,21 @@ final class NativeRemoteImageStore {
         let task: Task<UIImage, Error>
     }
 
+    private struct DataLoadOperation {
+        let id = UUID()
+        let task: Task<Data, Error>
+    }
+
     private let cache = NSCache<NSString, UIImage>()
+    private let originalDataCache = NSCache<NSString, NSData>()
     private var inFlight: [NSString: LoadOperation] = [:]
+    private var inFlightData: [NSString: DataLoadOperation] = [:]
 
     private init() {
         cache.countLimit = 24
         cache.totalCostLimit = 96 * 1_024 * 1_024
+        originalDataCache.countLimit = 8
+        originalDataCache.totalCostLimit = 64 * 1_024 * 1_024
     }
 
     func cachedImage(
@@ -1048,6 +1059,11 @@ final class NativeRemoteImageStore {
                       (200..<300).contains(response.statusCode),
                       data.count <= 40 * 1_024 * 1_024
                 else { throw URLError(.badServerResponse) }
+                originalDataCache.setObject(
+                    data as NSData,
+                    forKey: NSString(string: url.absoluteString),
+                    cost: data.count
+                )
 
                 guard let box = await NativeAnimatedImageDecoderService.shared.decode(
                     data,
@@ -1073,6 +1089,48 @@ final class NativeRemoteImageStore {
                 cost: memoryCost(of: image)
             )
             return image
+        } catch {
+            throw error
+        }
+    }
+
+    func originalData(for url: URL) async throws -> Data {
+        let key = NSString(string: url.absoluteString)
+        if let cached = originalDataCache.object(forKey: key) {
+            return cached as Data
+        }
+
+        let operation: DataLoadOperation
+        if let existing = inFlightData[key] {
+            operation = existing
+        } else {
+            let task = Task {
+                let (data, response) = try await URLSession.shared.data(
+                    for: NativeMediaImageRequestFactory.make(for: url)
+                )
+                guard let response = response as? HTTPURLResponse,
+                      (200..<300).contains(response.statusCode),
+                      data.count <= 40 * 1_024 * 1_024
+                else { throw URLError(.badServerResponse) }
+                return data
+            }
+            operation = DataLoadOperation(task: task)
+            inFlightData[key] = operation
+        }
+
+        defer {
+            if inFlightData[key]?.id == operation.id {
+                inFlightData.removeValue(forKey: key)
+            }
+        }
+        do {
+            let data = try await operation.task.value
+            originalDataCache.setObject(
+                data as NSData,
+                forKey: key,
+                cost: data.count
+            )
+            return data
         } catch {
             throw error
         }
@@ -1183,14 +1241,24 @@ private final class NativeMediaImageStore: ObservableObject {
 }
 
 private enum NativePhotoLibrary {
-    static func save(_ image: UIImage) async throws {
+    static func save(_ data: Data, sourceURL: URL) async throws {
         let status = await authorizationStatus()
         guard status == .authorized || status == .limited else {
             throw NativePhotoLibraryError.permissionDenied
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
-                PHAssetChangeRequest.creationRequestForAsset(from: image)
+                let options = PHAssetResourceCreationOptions()
+                options.originalFilename = NativePhotoLibraryResourcePolicy.filename(for: sourceURL)
+                let contentType = NativePhotoLibraryResourcePolicy.contentType(for: sourceURL)
+                if #available(iOS 26, *) {
+                    options.contentType = contentType
+                } else {
+                    options.uniformTypeIdentifier = contentType.identifier
+                }
+                PHAssetCreationRequest
+                    .forAsset()
+                    .addResource(with: .photo, data: data, options: options)
             } completionHandler: { succeeded, error in
                 if let error { continuation.resume(throwing: error) }
                 else if succeeded { continuation.resume() }
@@ -1207,6 +1275,26 @@ private enum NativePhotoLibrary {
                 continuation.resume(returning: status)
             }
         }
+    }
+}
+
+enum NativePhotoLibraryResourcePolicy {
+    static func filename(for url: URL) -> String {
+        let filename = url.lastPathComponent
+        if !filename.isEmpty { return filename }
+        return "ZhihuPlusPlus-\(UUID().uuidString).\(defaultExtension)"
+    }
+
+    static func contentType(for url: URL) -> UTType {
+        let ext = url.pathExtension.lowercased()
+        if !ext.isEmpty, let type = UTType(filenameExtension: ext), type.conforms(to: .image) {
+            return type
+        }
+        return .data
+    }
+
+    private static var defaultExtension: String {
+        "gif"
     }
 }
 

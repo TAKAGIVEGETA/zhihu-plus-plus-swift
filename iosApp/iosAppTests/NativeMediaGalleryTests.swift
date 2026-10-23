@@ -1,5 +1,6 @@
 import CoreGraphics
 import ImageIO
+import UniformTypeIdentifiers
 import UIKit
 import XCTest
 @testable import iosApp
@@ -198,6 +199,13 @@ final class NativeMediaGalleryTests: XCTestCase {
             startsWhenPossible: false
         )
         XCTAssertEqual(view.intrinsicContentSize, .zero)
+    }
+
+    func testPhotoResourcePolicyPreservesGIFResourceMetadata() throws {
+        let url = try XCTUnwrap(URL(string: "https://pic.zhimg.com/demo.gif?source=answer"))
+
+        XCTAssertEqual(NativePhotoLibraryResourcePolicy.contentType(for: url), .gif)
+        XCTAssertEqual(NativePhotoLibraryResourcePolicy.filename(for: url), "demo.gif")
     }
 
     func testImageRequestsUseZhihuBrowserUserAgent() throws {
