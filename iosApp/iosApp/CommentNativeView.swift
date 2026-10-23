@@ -159,9 +159,8 @@ private struct CommentReplySheetView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.nativeHapticFeedback) private var hapticFeedback
     @State private var isBlockingDismissal = true
-    @State private var isOpeningTouchActive = false
 
-    private static let openingDismissGrace: TimeInterval = 0.15
+    private static let dismissalGrace: TimeInterval = 0.15
 
     var body: some View {
         GeometryReader { geometry in
@@ -172,18 +171,16 @@ private struct CommentReplySheetView: View {
                     }
             }
             .contentShape(Rectangle())
-            .simultaneousGesture(openingTouchGate)
+            // A zero-distance gesture here competes with List swipe-action button taps.
             .simultaneousGesture(dismissGesture(containerWidth: geometry.size.width))
         }
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .modifier(CommentSheetPresentationModifier())
-        .interactiveDismissDisabled(isBlockingDismissal || isOpeningTouchActive)
+        .interactiveDismissDisabled(isBlockingDismissal)
         .accessibilityIdentifier("comment_reply_sheet")
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.openingDismissGrace) {
-                if isOpeningTouchActive == false {
-                    isBlockingDismissal = false
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.dismissalGrace) {
+                isBlockingDismissal = false
             }
         }
     }
@@ -199,27 +196,10 @@ private struct CommentReplySheetView: View {
         )
     }
 
-    private var openingTouchGate: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { _ in
-                if isBlockingDismissal {
-                    isOpeningTouchActive = true
-                }
-            }
-            .onEnded { _ in
-                guard isOpeningTouchActive else { return }
-                isOpeningTouchActive = false
-                DispatchQueue.main.async {
-                    isBlockingDismissal = false
-                }
-            }
-    }
-
     private func dismissGesture(containerWidth: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: CommentReplySheetSwipePolicy.minimumDistance)
             .onEnded { value in
                 guard isBlockingDismissal == false,
-                      isOpeningTouchActive == false,
                       CommentReplySheetSwipePolicy.shouldDismiss(
                         startLocation: value.startLocation,
                         translation: value.translation,
