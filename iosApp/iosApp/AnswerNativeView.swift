@@ -42,7 +42,10 @@ struct AnswerNativeView: View {
     private func loaded(_ content: AnswerDTO) -> some View {
         let metadata = QAMetadataPlacement(pinAnswerDate: pinAnswerDate)
         return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
+            // QABodyView already lays out every content block in a regular
+            // VStack. Keeping another estimation boundary here lets UIKit-backed
+            // GIF views invalidate cached placements on very tall answers.
+            VStack(alignment: .leading, spacing: 18) {
                 if content.route.kind == .answer {
                     Button {
                         if let questionID = content.questionID {

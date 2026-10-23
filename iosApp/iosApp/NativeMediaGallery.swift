@@ -846,7 +846,7 @@ private struct NativeAnimatedUIImageView: UIViewRepresentable {
     let contentMode: ContentMode
 
     func makeUIView(context: Context) -> UIImageView {
-        let view = UIImageView()
+        let view = NativeAnimatedImageView()
         view.clipsToBounds = true
         view.isUserInteractionEnabled = false
         return view
@@ -865,6 +865,17 @@ private struct NativeAnimatedUIImageView: UIViewRepresentable {
 
     static func dismantleUIView(_ uiView: UIImageView, coordinator: ()) {
         NativeAnimatedImageInstaller.apply(nil, to: uiView, startsWhenPossible: false)
+    }
+}
+
+@MainActor
+final class NativeAnimatedImageView: UIImageView {
+    // SwiftUI asks UIViewRepresentable for the wrapped view's ideal size.
+    // A plain UIImageView changes that size from nil to the decoded image size
+    // when a GIF finishes loading, which can invalidate a containing lazy layout.
+    // Parent aspect-ratio and frame constraints continue to own the real size.
+    override var intrinsicContentSize: CGSize {
+        .zero
     }
 }
 

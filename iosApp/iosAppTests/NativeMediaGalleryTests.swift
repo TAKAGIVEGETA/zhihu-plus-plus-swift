@@ -186,6 +186,20 @@ final class NativeMediaGalleryTests: XCTestCase {
         XCTAssertLessThanOrEqual(max(box.image.size.width, box.image.size.height), 200)
     }
 
+    @MainActor
+    func testAnimatedImageViewKeepsStableIdealSizeAfterDecoding() throws {
+        let view = NativeAnimatedImageView()
+        let image = try XCTUnwrap(UIImage(systemName: "photo"))
+
+        XCTAssertEqual(view.intrinsicContentSize, .zero)
+        NativeAnimatedImageInstaller.apply(
+            image,
+            to: view,
+            startsWhenPossible: false
+        )
+        XCTAssertEqual(view.intrinsicContentSize, .zero)
+    }
+
     func testImageRequestsUseZhihuBrowserUserAgent() throws {
         let url = try XCTUnwrap(URL(string: "https://pic.zhimg.com/demo.gif"))
         let request = NativeMediaImageRequestFactory.make(for: url)
