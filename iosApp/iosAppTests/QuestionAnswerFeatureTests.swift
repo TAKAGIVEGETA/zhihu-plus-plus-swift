@@ -754,7 +754,7 @@ final class QuestionAnswerFeatureTests: XCTestCase {
             return (
                 200,
                 Data(
-                    #"{"video_play":{"playlist":{"mp4":[{"bitrate":100,"url":["https://video.vzuu.com/low.mp4"]},{"bitrate":300,"url":["https://video.vzuu.com/high.mp4"]}]}}}"#.utf8
+                    #"{"video_play":{"playlist":{"mp4":[{"bitrate":767.065,"url":["https://vdn3.vzuu.com/low.mp4"]},{"bitrate":1024.5,"url":["https://vdn3.vzuu.com/high.mp4"]}]}}}"#.utf8
                 ),
                 [:]
             )
@@ -774,7 +774,7 @@ final class QuestionAnswerFeatureTests: XCTestCase {
 
         let playbackURL = try await repository.resolvePlaybackURL(for: route)
 
-        XCTAssertEqual(playbackURL, URL(string: "https://video.vzuu.com/high.mp4"))
+        XCTAssertEqual(playbackURL, URL(string: "https://vdn3.vzuu.com/high.mp4"))
         let request = try XCTUnwrap(recorder.requests.first)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.path, "/api/v4/video/play_info")

@@ -128,7 +128,7 @@ private struct NativeVideoPlayResponse: Decodable {
     }
 
     struct Playback: Decodable {
-        let bitrate: Int?
+        let bitrate: Double?
         let url: [String]?
     }
 
