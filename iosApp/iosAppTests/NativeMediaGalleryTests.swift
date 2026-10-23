@@ -177,10 +177,11 @@ final class NativeMediaGalleryTests: XCTestCase {
         CGImageDestinationAddImage(destination, frame, nil)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
 
-        let box = try XCTUnwrap(await NativeAnimatedImageDecoderService.shared.decode(
+        let decodedBox = await NativeAnimatedImageDecoderService.shared.decode(
             data as Data,
             maximumPixelSize: 200
-        ))
+        )
+        let box = try XCTUnwrap(decodedBox)
         XCTAssertNotNil(box.image.images)
         XCTAssertLessThanOrEqual(max(box.image.size.width, box.image.size.height), 200)
     }
