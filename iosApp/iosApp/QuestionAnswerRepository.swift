@@ -134,7 +134,7 @@ private struct NativeVideoPlayResponse: Decodable {
 
     var highestQualityURL: URL? {
         videoPlay?.playlist?.mp4?
-            .compactMap { playback -> (Int, URL)? in
+            .compactMap { playback -> (Double, URL)? in
                 guard let url = playback.url?.compactMap(trustedPlaybackURL).first else { return nil }
                 return (playback.bitrate ?? 0, url)
             }
